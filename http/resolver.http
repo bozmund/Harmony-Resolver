@@ -1,4 +1,4 @@
-@base = http://localhost:8080
+@base = http://localhost:8088
 @videoId = dQw4w9WgXcQ
 
 ### Liveness

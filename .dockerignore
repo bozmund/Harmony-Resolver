@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+.run
+**/bin
+**/obj
+artifacts
+plans
+tests

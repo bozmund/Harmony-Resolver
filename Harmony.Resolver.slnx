@@ -1,6 +1,9 @@
 <Solution>
   <Folder Name="/Solution Items/">
     <File Path=".github/workflows/ci.yml" />
+    <File Path=".dockerignore" />
+    <File Path=".run/Harmony Resolver API.run.xml" />
+    <File Path=".run/Harmony Resolver Full Stack.run.xml" />
     <File Path="AGENTS.md" />
     <File Path="compose.yaml" />
     <File Path="deploy/nginx.conf" />
@@ -12,6 +15,7 @@
     <File Path="mcp-config.example.json" />
     <File Path="NuGet.Config" />
     <File Path="plans/index.md" />
+    <File Path="src/Harmony.Resolver.Api/Properties/launchSettings.json" />
     <File Path="README.md" />
   </Folder>
   <Project Path="src/Harmony.Resolver.Api/Harmony.Resolver.Api.csproj" />

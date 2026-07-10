@@ -1,4 +1,6 @@
-using Harmony.Resolver.Api;
+using Harmony.Resolver.Api.Configuration;
+using Harmony.Resolver.Api.Domain;
+using Harmony.Resolver.Api.Infrastructure.Persistence;
 using Xunit;
 
 namespace Harmony.Resolver.UnitTests;

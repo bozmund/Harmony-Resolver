@@ -1,6 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json.Serialization;
-using Harmony.Resolver.Api;
+using Harmony.Resolver.Api.Abstractions;
+using Harmony.Resolver.Api.Configuration;
+using Harmony.Resolver.Api.Diagnostics;
+using Harmony.Resolver.Api.Domain;
+using Harmony.Resolver.Api.Infrastructure.Extraction;
+using Harmony.Resolver.Api.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -39,7 +44,16 @@ app.UseExceptionHandler(handler => handler.Run(async context =>
     await Results.Problem(statusCode: 500, title: "Resolver failure", extensions: new Dictionary<string, object?> { ["traceId"] = traceId }).ExecuteAsync(context);
 }));
 if (!string.IsNullOrWhiteSpace(authDomain)) app.UseAuthentication();
-if (app.Environment.IsDevelopment()) app.MapOpenApi();
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        options.RoutePrefix = "swagger";
+        options.SwaggerEndpoint("/openapi/v1.json", "Harmony Resolver API v1");
+        options.DocumentTitle = "Harmony Resolver API";
+    });
+}
 
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
 app.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
@@ -94,4 +108,3 @@ app.Run();
 return;
 
 static object Problem(string code, string detail) => new { type = $"https://harmony-resolver/errors/{code}", title = code, detail, status = 400, code };
-
