@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "harmony-resolver": {
+      "command": "dotnet",
+      "args": ["run", "--project", "src/Harmony.Resolver.McpBridge"],
+      "env": {
+        "HARMONY_MCP_URL": "https://resolver.example.com/mcp",
+        "AUTH0_DOMAIN": "your-tenant.eu.auth0.com",
+        "AUTH0_CLIENT_ID": "set-in-local-secret-store",
+        "AUTH0_CLIENT_SECRET": "set-in-local-secret-store",
+        "AUTH0_AUDIENCE": "https://harmony-resolver-diagnostics"
+      }
+    }
+  }
+}

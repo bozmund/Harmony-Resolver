@@ -1,0 +1,15 @@
+name: ci
+on: [push, pull_request]
+permissions: { contents: read }
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: 10.0.x }
+      - run: dotnet restore Harmony.Resolver.slnx
+      - run: dotnet format Harmony.Resolver.slnx --verify-no-changes --no-restore
+      - run: dotnet build Harmony.Resolver.slnx -c Release --no-restore
+      - run: dotnet test Harmony.Resolver.slnx -c Release --no-build
+      - run: docker compose config --quiet

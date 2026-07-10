@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment: { POSTGRES_DB: harmony, POSTGRES_USER: harmony, POSTGRES_PASSWORD: development-only }
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck: { test: [CMD-SHELL, "pg_isready -U harmony"], interval: 5s, timeout: 3s, retries: 20 }
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    environment: { MINIO_ROOT_USER: harmony, MINIO_ROOT_PASSWORD: development-only-minio }
+    volumes: [minio:/data]
+  valkey:
+    image: valkey/valkey:8-alpine
+    volumes: [valkey:/data]
+  api-1: &api
+    build: .
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Development
+      Resolver__UseFakeExtractor: "true"
+      ConnectionStrings__PostgreSql: Host=postgres;Database=harmony;Username=harmony;Password=development-only
+      ConnectionStrings__MinIO: http://minio:9000
+      ConnectionStrings__Valkey: valkey:6379
+    depends_on: [postgres, minio, valkey]
+  api-2: *api
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes: ["./deploy/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    depends_on: [api-1, api-2]
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes: ["./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro", prometheus:/prometheus]
+  loki:
+    image: grafana/loki:3.5.0
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes: [loki:/loki]
+  grafana:
+    image: grafana/grafana:12.0.0
+    ports: ["3000:3000"]
+    volumes: [grafana:/var/lib/grafana]
+volumes: { postgres: {}, minio: {}, valkey: {}, prometheus: {}, loki: {}, grafana: {} }

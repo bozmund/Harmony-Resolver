@@ -1,0 +1,21 @@
+@base = http://localhost:8080
+@videoId = dQw4w9WgXcQ
+
+### Liveness
+GET {{base}}/health/live
+
+### State
+GET {{base}}/v1/tracks/{{videoId}}
+
+### First miss / cache hit
+GET {{base}}/v1/tracks/{{videoId}}/audio
+
+### Range hit
+GET {{base}}/v1/tracks/{{videoId}}/audio
+Range: bytes=0-99
+
+### Invalid input / SSRF defense
+GET {{base}}/v1/tracks/https%3A%2F%2Fexample.com/audio
+
+### Sanitized diagnostic snapshot
+GET {{base}}/internal/diagnostics/snapshot
