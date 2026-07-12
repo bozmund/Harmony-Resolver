@@ -1,0 +1,103 @@
+@mcp = http://localhost:8088/mcp
+@token = replace-with-auth0-diagnostics-token
+
+### Initialize Streamable HTTP session
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"harmony-http-suite","version":"1.0"}}}
+
+### The following calls require Mcp-Session-Id returned by initialize
+@session = replace-with-session-id
+
+### System snapshot
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_system_snapshot","arguments":{}}}
+
+### Dependency health
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_dependency_health","arguments":{}}}
+
+### Failed ingestions
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_failed_ingestions","arguments":{"limit":50}}}
+
+### Inspect ingestion
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"inspect_ingestion","arguments":{"videoId":"dQw4w9WgXcQ"}}}
+
+### Inspect track
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"inspect_track","arguments":{"videoId":"dQw4w9WgXcQ"}}}
+
+### Query logs (bounded to 24 hours / 200 events)
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"query_logs","arguments":{"hours":24,"limit":200}}}
+
+### Get trace
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_trace","arguments":{"traceId":"replace-with-trace-id"}}}
+
+### Query metrics
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"query_metrics","arguments":{}}}
+
+### Deployment info
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"get_deployment_info","arguments":{}}}
+
+### Run diagnostic check
+POST {{mcp}}
+Authorization: Bearer {{token}}
+Mcp-Session-Id: {{session}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"run_diagnostic_check","arguments":{}}}

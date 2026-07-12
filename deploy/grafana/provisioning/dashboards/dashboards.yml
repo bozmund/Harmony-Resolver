@@ -1,0 +1,6 @@
+apiVersion: 1
+providers:
+  - name: Harmony Resolver
+    folder: Harmony Resolver
+    type: file
+    options: { path: /var/lib/grafana/dashboards }

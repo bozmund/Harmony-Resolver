@@ -1,0 +1,73 @@
+{
+  "title": "Harmony Resolver Overview",
+  "uid": "harmony-resolver",
+  "schemaVersion": 40,
+  "refresh": "15s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "HTTP request rate",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum(rate(http_server_request_duration_seconds_count[5m])) by (http_response_status_code)", "legendFormat": "{{http_response_status_code}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP p95 latency",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }]
+    },
+    {
+      "type": "stat",
+      "title": "Track status distribution",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 6 },
+      "description": "Count of tracks by readiness status. Available via diagnostic snapshot.",
+      "targets": [
+        { "expr": "count(resolver_tracks{status=\"ready\"})", "legendFormat": "Ready" },
+        { "expr": "count(resolver_tracks{status=\"ingesting\"})", "legendFormat": "Ingesting" },
+        { "expr": "count(resolver_tracks{status=\"failed\"})", "legendFormat": "Failed" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none" },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Active leases",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 6 },
+      "targets": [{ "expr": "resolver_active_leases", "legendFormat": "Active" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingestion quota exhaustion rate",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 6 },
+      "targets": [{ "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=\"429\"}[5m]))", "legendFormat": "429/s" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Active requests",
+      "gridPos": { "x": 0, "y": 14, "w": 8, "h": 7 },
+      "targets": [{ "expr": "sum(http_server_active_requests)", "legendFormat": "Active" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Object store operation latency (MinIO)",
+      "gridPos": { "x": 8, "y": 14, "w": 8, "h": 7 },
+      "targets": [{ "expr": "rate(minio_object_put_duration_seconds_sum[5m]) / rate(minio_object_put_duration_seconds_count[5m])", "legendFormat": "Put avg" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Extraction failure rate by code",
+      "gridPos": { "x": 16, "y": 14, "w": 8, "h": 7 },
+      "targets": [{ "expr": "sum(rate(resolver_extraction_failures_total[5m])) by (failure_code)", "legendFormat": "{{failure_code}}" }]
+    },
+    {
+      "type": "logs",
+      "title": "Resolver logs",
+      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 10 },
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "targets": [{ "expr": "{service_name=~\"harmony-resolver.*\"}" }]
+    }
+  ]
+}
