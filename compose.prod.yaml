@@ -37,7 +37,7 @@ services:
       ObjectStorage__SecretKey: "${MINIO_ROOT_PASSWORD:?}"
       ObjectStorage__Bucket: harmony-audio
       Quotas__IdentityHmacKey: "${IDENTITY_HMAC_KEY:?}"
-      Auth0__Domain: "${AUTH0_DOMAIN:-}"
+      Auth0__Domain: dev-bozmund.eu.auth0.com
       Auth0__Audience: "${AUTH0_AUDIENCE:-}"
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -54,8 +54,8 @@ services:
       Resolver__BaseUrl: http://api-1:8080
       Loki__BaseUrl: http://loki:3100
       Audit__HmacKey: "${AUDIT_HMAC_KEY:?}"
-      Auth0__Domain: "${AUTH0_DOMAIN:-}"
-      Auth0__Audience: "${AUTH0_DIAGNOSTICS_AUDIENCE:-}"
+      Auth0__Domain: dev-bozmund.eu.auth0.com
+      Auth0__Audience: https://harmony-resolver-diagnostics
     depends_on:
       api-1: { condition: service_started }
   nginx:
