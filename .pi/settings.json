@@ -1,0 +1,5 @@
+{
+  "packages": [
+    ".\\local-packages\\harmony-resolver-diagnostics"
+  ]
+}

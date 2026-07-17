@@ -1,4 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
-  <ItemGroup><PackageReference Include="ModelContextProtocol" /><PackageReference Include="Microsoft.Extensions.Hosting" /></ItemGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UserSecretsId>0647e4e3-e958-4316-b939-8ea15407ef9c</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
+  </ItemGroup>
 </Project>

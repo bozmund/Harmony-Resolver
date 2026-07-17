@@ -1,11 +1,16 @@
 using System.ComponentModel;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Server;
+
+LoadDotEnvFile();
+LoadUserSecretsFallback();
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton(new HttpClient());
@@ -13,6 +18,33 @@ builder.Services.AddSingleton<Auth0TokenProvider>();
 builder.Services.AddSingleton<RemoteMcpClient>();
 builder.Services.AddMcpServer().WithStdioServerTransport().WithTools<BridgeTools>();
 await builder.Build().RunAsync();
+
+static void LoadDotEnvFile([CallerFilePath] string sourceFilePath = "")
+{
+    var envPath = Path.Combine(Path.GetDirectoryName(sourceFilePath)!, ".env");
+    if (!File.Exists(envPath)) return;
+    foreach (var rawLine in File.ReadAllLines(envPath))
+    {
+        var line = rawLine.Trim();
+        if (line.Length == 0 || line.StartsWith('#')) continue;
+        var separatorIndex = line.IndexOf('=');
+        if (separatorIndex < 0) continue;
+        var key = line[..separatorIndex].Trim();
+        var value = line[(separatorIndex + 1)..].Trim().Trim('"');
+        if (Environment.GetEnvironmentVariable(key) is null) Environment.SetEnvironmentVariable(key, value);
+    }
+}
+
+// Fallback for values not already supplied by a real env var or .env, e.g. `dotnet user-secrets set AUTH0_CLIENT_ID ...`.
+static void LoadUserSecretsFallback()
+{
+    var configuration = new ConfigurationBuilder().AddUserSecrets<Program>(optional: true).Build();
+    foreach (var key in new[] { "HARMONY_MCP_URL", "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET", "AUTH0_AUDIENCE" })
+    {
+        if (Environment.GetEnvironmentVariable(key) is null && configuration[key] is { } value)
+            Environment.SetEnvironmentVariable(key, value);
+    }
+}
 
 public sealed class Auth0TokenProvider(HttpClient http)
 {
