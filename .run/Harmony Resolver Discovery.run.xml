@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Harmony Resolver Discovery" type="DotNetProject" factoryName=".NET Project">
+    <option name="PROJECT_PATH" value="$PROJECT_DIR$/src/Harmony.Resolver.Discovery/Harmony.Resolver.Discovery.csproj" />
+    <option name="PROGRAM_PARAMETERS" value="" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2"><option name="Build" /></method>
+  </configuration>
+</component>

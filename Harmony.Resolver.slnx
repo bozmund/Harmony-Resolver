@@ -6,6 +6,8 @@
     <File Path=".env.example" />
     <File Path=".run/Harmony Resolver API.run.xml" />
     <File Path=".run/Harmony Resolver Full Stack.run.xml" />
+    <File Path=".run/Harmony Resolver Discovery.run.xml" />
+    <File Path=".run/Harmony Resolver Phone Stack.run.xml" />
     <File Path="AGENTS.md" />
     <File Path="compose.yaml" />
     <File Path="deploy/nginx.conf" />
@@ -32,6 +34,7 @@
   <Project Path="src/Harmony.Resolver.Api/Harmony.Resolver.Api.csproj" />
   <Project Path="src/Harmony.Resolver.Mcp/Harmony.Resolver.Mcp.csproj" />
   <Project Path="src/Harmony.Resolver.McpBridge/Harmony.Resolver.McpBridge.csproj" />
+  <Project Path="src/Harmony.Resolver.Discovery/Harmony.Resolver.Discovery.csproj" />
   <Project Path="tests/Harmony.Resolver.UnitTests/Harmony.Resolver.UnitTests.csproj" />
   <Project Path="tests/Harmony.Resolver.IntegrationTests/Harmony.Resolver.IntegrationTests.csproj" />
 </Solution>

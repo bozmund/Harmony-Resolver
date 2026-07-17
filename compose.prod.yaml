@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment: { POSTGRES_DB: harmony, POSTGRES_USER: harmony, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?}" }
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck: { test: [CMD-SHELL, "pg_isready -U harmony"], interval: 5s, timeout: 3s, retries: 20 }
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?}"
+    volumes: [minio:/data]
+    healthcheck: { test: [CMD, "curl", "-f", "http://localhost:9000/minio/health/live"], interval: 5s, timeout: 3s, retries: 20 }
+  valkey:
+    image: valkey/valkey:8-alpine
+    volumes: [valkey:/data]
+    healthcheck: { test: [CMD, "valkey-cli", "ping"], interval: 5s, timeout: 3s, retries: 20 }
+  migrate:
+    image: ghcr.io/bozmund/harmony-resolver-api:latest
+    environment:
+      RUN_MIGRATIONS: "true"
+      ConnectionStrings__PostgreSql: "Host=postgres;Database=harmony;Username=harmony;Password=${POSTGRES_PASSWORD:?}"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+  api-1: &api
+    image: ghcr.io/bozmund/harmony-resolver-api:latest
+    environment: &api-environment
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__PostgreSql: "Host=postgres;Database=harmony;Username=harmony;Password=${POSTGRES_PASSWORD:?}"
+      ConnectionStrings__MinIO: http://minio:9000
+      ConnectionStrings__Valkey: valkey:6379
+      ObjectStorage__Endpoint: http://minio:9000
+      ObjectStorage__AccessKey: "${MINIO_ROOT_USER:?}"
+      ObjectStorage__SecretKey: "${MINIO_ROOT_PASSWORD:?}"
+      ObjectStorage__Bucket: harmony-audio
+      Quotas__IdentityHmacKey: "${IDENTITY_HMAC_KEY:?}"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+  api-2:
+    <<: *api
+    environment: *api-environment
+  mcp:
+    image: ghcr.io/bozmund/harmony-resolver-mcp:latest
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      Resolver__BaseUrl: http://api-1:8080
+      Loki__BaseUrl: http://loki:3100
+      Audit__HmacKey: "${AUDIT_HMAC_KEY:?}"
+    depends_on:
+      api-1: { condition: service_started }
+  nginx:
+    image: nginx:1.27-alpine
+    volumes: ["./deploy/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    depends_on: [api-1, api-2, mcp]
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    volumes:
+      - "./deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [nginx]
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes: ["./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro", prometheus:/prometheus]
+  loki:
+    image: grafana/loki:3.5.0
+    command: -config.file=/etc/loki/harmony.yml
+    volumes: ["./deploy/loki.yml:/etc/loki/harmony.yml:ro", loki:/loki]
+  alloy:
+    image: grafana/alloy:v1.8.3
+    command: run /etc/alloy/config.alloy
+    volumes:
+      - ./deploy/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+  grafana:
+    image: grafana/grafana:12.0.0
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - grafana:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+volumes: { postgres: {}, minio: {}, valkey: {}, prometheus: {}, loki: {}, grafana: {}, caddy_data: {}, caddy_config: {} }

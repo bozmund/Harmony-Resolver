@@ -1,0 +1,23 @@
+name: deploy
+on:
+  workflow_run:
+    workflows: ["publish images"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {}
+permissions: { contents: read }
+jobs:
+  redeploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: deploy
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/harmony-resolver
+            git pull --ff-only
+            sudo systemctl restart harmony-resolver.service

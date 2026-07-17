@@ -5,8 +5,8 @@
 .vscode/*.local.json
 .env
 artifacts/
-diagnostics/
 data/
 *.user
 *.suo
+compose.*.local.yml
 

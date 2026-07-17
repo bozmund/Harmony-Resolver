@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Harmony Resolver Phone Stack" type="CompoundRunConfigurationType">
+    <toRun name="Harmony Resolver Full Stack" type="docker-deploy" />
+    <toRun name="Harmony Resolver Discovery" type="DotNetProject" />
+    <method v="2" />
+  </configuration>
+</component>

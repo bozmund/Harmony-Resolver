@@ -1,4 +1,3 @@
-using System.Net;
 using System.IO.Pipelines;
 using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Configuration;
@@ -9,11 +8,10 @@ namespace Harmony.Resolver.Api.Endpoints;
 
 public static class DistributedResolverEndpoints
 {
-    public static IEndpointRouteBuilder MapDistributedResolverEndpoints(this IEndpointRouteBuilder endpoints)
+    public static void MapDistributedResolverEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/v1/tracks/{videoId}", GetTrackAsync);
         endpoints.MapGet("/v1/tracks/{videoId}/audio", GetAudioAsync);
-        return endpoints;
     }
 
     private static async Task<IResult> GetTrackAsync(
@@ -183,8 +181,7 @@ public static class DistributedResolverEndpoints
             throw new BadHttpRequestException("Invalid byte range.", StatusCodes.Status416RangeNotSatisfiable);
         var end = string.IsNullOrEmpty(parts[1]) ? length - 1 : long.Parse(parts[1]);
         end = Math.Min(end, length - 1);
-        if (end < start) throw new BadHttpRequestException("Invalid byte range.", StatusCodes.Status416RangeNotSatisfiable);
-        return (start, end - start + 1, true);
+        return end < start ? throw new BadHttpRequestException("Invalid byte range.", StatusCodes.Status416RangeNotSatisfiable) : (start, end - start + 1, true);
     }
 
     private static IResult InvalidVideoId() => Results.BadRequest(new

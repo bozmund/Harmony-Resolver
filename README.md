@@ -20,8 +20,11 @@ Open `Harmony.Resolver.slnx`, choose a shared configuration in the toolbar, and 
 
 - **Harmony Resolver API** starts a fast, debugger-attached API at `http://localhost:5080` and opens Swagger at `http://localhost:5080/swagger`.
 - **Harmony Resolver Full Stack** starts the two API replicas, Nginx, PostgreSQL, MinIO, Valkey, Prometheus, Loki, and Grafana with Docker Compose. Open Swagger at `http://localhost:8088/swagger` and Grafana at `http://localhost:3000`.
+- **Harmony Resolver Phone Stack** starts the full stack plus the Windows host mDNS advertiser for `_harmony-resolver._tcp`.
 
 The API configuration uses deterministic media fixtures, so it does not contact YouTube. Stop the full stack with Rider's Stop button or `./scripts/agent-down.ps1`.
+
+For physical-phone testing, run `scripts/lan-firewall.ps1 enable` once from an elevated PowerShell, then run `scripts/phone-check.ps1` to print and validate the laptop LAN URL. The firewall rules are restricted to Private networks; no router port forwarding is needed.
 
 Raw OpenAPI JSON is available at `/openapi/v1.json` in Development. Swagger and OpenAPI are intentionally unavailable outside Development.
 
@@ -34,6 +37,12 @@ Production refuses to start without PostgreSQL, MinIO, Valkey, and a non-develop
 Database schema changes are EF Core migrations. Compose runs the one-shot `migrate` service and starts both API replicas only after migration succeeds.
 
 The public endpoints are available through Nginx. `/metrics` and `/internal/*` are blocked publicly. MCP is routed at `/mcp`; outside Development it requires an Auth0 token containing `diagnostics:read`.
+
+### Deploying to a bare VPS
+
+`deploy/bootstrap-oracle-vps.sh` sets up the full stack (Docker Engine, firewall rules, a root-owned secrets file, and a `harmony-resolver` systemd unit) on a plain Ubuntu VPS such as an Oracle Cloud Ampere A1 instance, using `compose.prod.yaml` — a production variant of `compose.yaml` that pulls the prebuilt `ghcr.io/bozmund/harmony-resolver-*` images instead of building, and fronts Nginx with Caddy for automatic Let's Encrypt HTTPS (see `deploy/Caddyfile`). Grafana is intentionally bound to `127.0.0.1` only; reach it with `ssh -L 3000:localhost:3000 <user>@<vps-ip>` rather than exposing it publicly.
+
+Run `deploy/setup-ci-deploy-user.sh` once afterward to let `.github/workflows/deploy.yml` redeploy automatically after every successful image publish: it creates a minimally-privileged `deploy` user restricted by sudoers to exactly `systemctl restart harmony-resolver.service`, and prints an SSH keypair to register as the `VPS_HOST`/`VPS_SSH_KEY` repository secrets.
 
 ### Diagnostics
 

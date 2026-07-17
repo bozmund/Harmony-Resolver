@@ -1,0 +1,3 @@
+harmony-resolver.duckdns.org {
+    reverse_proxy nginx:80
+}
