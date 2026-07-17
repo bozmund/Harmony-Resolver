@@ -139,7 +139,7 @@ var forwardedHeaders = new ForwardedHeadersOptions
 forwardedHeaders.KnownIPNetworks.Clear();
 forwardedHeaders.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeaders);
-if (!string.IsNullOrWhiteSpace(authDomain)) app.UseAuthentication();
+if (!string.IsNullOrWhiteSpace(authDomain) && !string.IsNullOrWhiteSpace(audience)) app.UseAuthentication();
 app.Use(async (context, next) =>
 {
     if (context.Request.Headers.Authorization.Count > 0)
