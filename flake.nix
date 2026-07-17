@@ -48,7 +48,7 @@
       };
 
       # Wrap publish output into a directory that can be added to a layered image.
-      appLayer = publish:
+      appLayer = pkgs: publish:
         pkgs.runCommand "app-layer" { } ''
           mkdir -p $out/app
           cp -r ${publish}/app/. $out/app/
@@ -62,7 +62,7 @@
         tag = "latest";
         fromImage = baseImage pkgs;
         contents = with pkgs; [ ffmpeg python3 python3Packages.pip yt-dlp ]
-          ++ [ (appLayer publish) ];
+          ++ [ (appLayer pkgs publish) ];
         config = {
           Cmd = [ "dotnet" "/app/Harmony.Resolver.Api.dll" ];
           WorkingDir = "/app";
@@ -81,7 +81,7 @@
         tag = "latest";
         fromImage = baseImage pkgs;
         contents = with pkgs; [ ]
-          ++ [ (appLayer publish) ];
+          ++ [ (appLayer pkgs publish) ];
         config = {
           Cmd = [ "dotnet" "/app/Harmony.Resolver.Mcp.dll" ];
           WorkingDir = "/app";
