@@ -83,6 +83,10 @@ services:
     volumes: ["/:/host:ro,rslave"]
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.52.1
+    # cadvisor needs privileged + /dev/kmsg to read cgroups; without them it
+    # starts fine but exposes no per-container metrics.
+    privileged: true
+    devices: ["/dev/kmsg"]
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
