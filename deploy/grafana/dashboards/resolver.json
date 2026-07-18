@@ -3,86 +3,191 @@
   "uid": "harmony-resolver",
   "schemaVersion": 40,
   "refresh": "15s",
-  "time": { "from": "now-15m", "to": "now" },
+  "time": { "from": "now-6h", "to": "now" },
   "panels": [
     {
-      "type": "timeseries",
-      "title": "HTTP request rate",
-      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
-      "targets": [{ "expr": "sum(rate(http_server_request_duration_seconds_count[5m])) by (http_request_method, http_route, http_response_status_code)", "legendFormat": "{{http_request_method}} {{http_route}} ({{http_response_status_code}})" }],
-      "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
-    },
-    {
-      "type": "timeseries",
-      "title": "HTTP p95 latency",
-      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
-      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, http_request_method, http_route))", "legendFormat": "{{http_request_method}} {{http_route}}" }],
-      "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
+      "type": "stat",
+      "title": "Cached tracks",
+      "gridPos": { "x": 0, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT COUNT(*) FROM resolver_tracks WHERE status = 'ready'" }],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
     },
     {
       "type": "stat",
-      "title": "Track status distribution",
-      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 6 },
-      "description": "Count of tracks by readiness status. Available via diagnostic snapshot.",
-      "targets": [
-        { "expr": "count(resolver_tracks{status=\"ready\"})", "legendFormat": "Ready" },
-        { "expr": "count(resolver_tracks{status=\"ingesting\"})", "legendFormat": "Ingesting" },
-        { "expr": "count(resolver_tracks{status=\"failed\"})", "legendFormat": "Failed" }
-      ],
+      "title": "Audio cache size",
+      "gridPos": { "x": 5, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT COALESCE(SUM(content_length), 0) FROM resolver_tracks WHERE status = 'ready'" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Plays (24h)",
+      "gridPos": { "x": 10, "y": 0, "w": 5, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT COUNT(*) FROM resolver_play_events WHERE played_at > now() - interval '24 hours'" }],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Failed tracks",
+      "gridPos": { "x": 15, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT COUNT(*) FROM resolver_tracks WHERE status = 'failed'" }],
       "fieldConfig": {
-        "defaults": { "unit": "none" },
+        "defaults": {
+          "unit": "none",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Disk used",
+      "gridPos": { "x": 19, "y": 0, "w": 5, "h": 4 },
+      "targets": [{ "refId": "A", "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"})", "legendFormat": "used" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 }] }
+        },
         "overrides": []
       }
     },
     {
       "type": "timeseries",
-      "title": "Active leases",
-      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 6 },
-      "targets": [{ "expr": "resolver_active_leases", "legendFormat": "Active" }]
-    },
-    {
-      "type": "timeseries",
-      "title": "Ingestion quota exhaustion rate",
-      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 6 },
-      "targets": [{ "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=\"429\"}[5m]))", "legendFormat": "429/s" }]
-    },
-    {
-      "type": "timeseries",
-      "title": "Active requests",
-      "gridPos": { "x": 0, "y": 14, "w": 8, "h": 7 },
-      "targets": [{ "expr": "sum(http_server_active_requests)", "legendFormat": "Active" }]
-    },
-    {
-      "type": "timeseries",
-      "title": "Object store operation latency (MinIO)",
-      "gridPos": { "x": 8, "y": 14, "w": 8, "h": 7 },
-      "targets": [{ "expr": "rate(minio_object_put_duration_seconds_sum[5m]) / rate(minio_object_put_duration_seconds_count[5m])", "legendFormat": "Put avg" }]
-    },
-    {
-      "type": "timeseries",
-      "title": "Extraction failure rate by code",
-      "gridPos": { "x": 16, "y": 14, "w": 8, "h": 7 },
-      "targets": [{ "expr": "sum(rate(resolver_extraction_failures_total[5m])) by (failure_code)", "legendFormat": "{{failure_code}}" }]
-    },
-    {
-      "type": "logs",
-      "title": "Resolver logs",
-      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 10 },
-      "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [{ "expr": "{service_name=~\"api-1|api-2|nginx|mcp\"}" }]
+      "title": "Track request rate",
+      "gridPos": { "x": 0, "y": 4, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(http_server_request_duration_seconds_count{http_route=~\"/v1/tracks.*\"}[5m])) by (http_request_method, http_route, http_response_status_code)", "legendFormat": "{{http_request_method}} {{http_route}} ({{http_response_status_code}})" }],
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
     },
     {
       "type": "timeseries",
       "title": "Audio serve p95 latency by cache status",
-      "gridPos": { "x": 0, "y": 31, "w": 12, "h": 8 },
-      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(resolver_audio_serve_duration_seconds_bucket[5m])) by (le, cache))", "legendFormat": "{{cache}}" }]
+      "gridPos": { "x": 8, "y": 4, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(resolver_audio_serve_duration_seconds_bucket[5m])) by (le, cache))", "legendFormat": "{{cache}}" }],
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
     },
     {
       "type": "timeseries",
       "title": "Cache hit rate",
-      "gridPos": { "x": 12, "y": 31, "w": 12, "h": 8 },
-      "targets": [{ "expr": "sum(rate(resolver_audio_serve_duration_seconds_count{cache=\"hit\"}[5m])) / sum(rate(resolver_audio_serve_duration_seconds_count[5m]))", "legendFormat": "hit rate" }],
+      "gridPos": { "x": 16, "y": 4, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(resolver_audio_serve_duration_seconds_count{cache=\"hit\"}[5m])) / sum(rate(resolver_audio_serve_duration_seconds_count[5m]))", "legendFormat": "hit rate" }],
       "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "type": "table",
+      "title": "Recent plays",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT played_at, video_id, cache, duration_ms, identity_hash FROM resolver_play_events ORDER BY played_at DESC LIMIT 20" }]
+    },
+    {
+      "type": "table",
+      "title": "Cached tracks (most recently played first)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT video_id, content_length AS size_bytes, last_accessed_at, expires_at FROM resolver_tracks WHERE status = 'ready' ORDER BY last_accessed_at DESC LIMIT 50" }],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [{ "matcher": { "id": "byName", "options": "size_bytes" }, "properties": [{ "id": "unit", "value": "bytes" }] }]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Extraction failure rate by code",
+      "gridPos": { "x": 0, "y": 21, "w": 8, "h": 9 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(resolver_extraction_failures_total[5m])) by (failure_code)", "legendFormat": "{{failure_code}}" }],
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "table",
+      "title": "Failed tracks",
+      "gridPos": { "x": 8, "y": 21, "w": 8, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "Postgres" },
+      "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT video_id, failure_code, retry_after, updated_at FROM resolver_tracks WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 20" }]
+    },
+    {
+      "type": "logs",
+      "title": "Warnings & errors",
+      "gridPos": { "x": 16, "y": 21, "w": 8, "h": 9 },
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "targets": [{ "refId": "A", "expr": "{service_name=~\"api-1|api-2\"} | json | LogLevel =~ \"Warning|Error|Critical\"" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU usage",
+      "gridPos": { "x": 0, "y": 30, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "cpu" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory usage",
+      "gridPos": { "x": 8, "y": 30, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "memory" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk usage",
+      "gridPos": { "x": 16, "y": 30, "w": 8, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"})", "legendFormat": "root disk" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container memory",
+      "gridPos": { "x": 0, "y": 38, "w": 12, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "container_memory_working_set_bytes{name=~\"harmony-resolver.*\"}", "legendFormat": "{{name}}" }],
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container CPU",
+      "gridPos": { "x": 12, "y": 38, "w": 12, "h": 8 },
+      "targets": [{ "refId": "A", "expr": "rate(container_cpu_usage_seconds_total{name=~\"harmony-resolver.*\"}[5m]) * 100", "legendFormat": "{{name}}" }],
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "type": "row",
+      "title": "Infra / all traffic",
+      "collapsed": true,
+      "gridPos": { "x": 0, "y": 46, "w": 24, "h": 1 },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "HTTP request rate (all routes)",
+          "gridPos": { "x": 0, "y": 47, "w": 12, "h": 8 },
+          "targets": [{ "refId": "A", "expr": "sum(rate(http_server_request_duration_seconds_count[5m])) by (http_request_method, http_route, http_response_status_code)", "legendFormat": "{{http_request_method}} {{http_route}} ({{http_response_status_code}})" }],
+          "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "HTTP p95 latency (all routes)",
+          "gridPos": { "x": 12, "y": 47, "w": 12, "h": 8 },
+          "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, http_request_method, http_route))", "legendFormat": "{{http_request_method}} {{http_route}}" }],
+          "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "Ingestion quota exhaustion rate",
+          "gridPos": { "x": 0, "y": 55, "w": 12, "h": 7 },
+          "targets": [{ "refId": "A", "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=\"429\"}[5m]))", "legendFormat": "429/s" }]
+        },
+        {
+          "type": "logs",
+          "title": "All service logs",
+          "gridPos": { "x": 12, "y": 55, "w": 12, "h": 7 },
+          "datasource": { "type": "loki", "uid": "Loki" },
+          "targets": [{ "refId": "A", "expr": "{service_name=~\"api-1|api-2|nginx|mcp\"}" }]
+        }
+      ]
     }
   ]
 }

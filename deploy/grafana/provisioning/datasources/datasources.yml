@@ -1,4 +1,13 @@
 apiVersion: 1
 datasources:
-  - { name: Prometheus, type: prometheus, access: proxy, url: http://prometheus:9090, isDefault: true }
-  - { name: Loki, type: loki, access: proxy, url: http://loki:3100 }
+  - { name: Prometheus, uid: Prometheus, type: prometheus, access: proxy, url: http://prometheus:9090, isDefault: true }
+  - { name: Loki, uid: Loki, type: loki, access: proxy, url: http://loki:3100 }
+  - name: Postgres
+    uid: Postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: harmony
+    editable: false
+    jsonData: { database: harmony, sslmode: disable }
+    secureJsonData: { password: $POSTGRES_PASSWORD }

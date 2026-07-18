@@ -77,6 +77,8 @@ services:
   grafana:
     image: grafana/grafana:12.0.0
     ports: ["${GRAFANA_PORT:-3000}:3000"]
+    environment:
+      POSTGRES_PASSWORD: development-only
     volumes:
       - grafana:/var/lib/grafana
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro

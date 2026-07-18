@@ -72,8 +72,22 @@ services:
     depends_on: [nginx]
   prometheus:
     image: prom/prometheus:v3.4.0
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    # --web.enable-lifecycle also serves as a forced-recreate marker: compose only
+    # recreates containers whose service definition changed, so a bind-mounted
+    # prometheus.yml edit alone never reloads scrape config on deploy.
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d", "--web.enable-lifecycle"]
     volumes: ["./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro", prometheus:/prometheus]
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command: ["--path.rootfs=/host"]
+    volumes: ["/:/host:ro,rslave"]
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
   loki:
     image: grafana/loki:3.5.0
     command: -config.file=/etc/loki/harmony.yml
@@ -88,6 +102,8 @@ services:
   grafana:
     image: grafana/grafana:12.0.0
     ports: ["127.0.0.1:3000:3000"]
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?}"
     volumes:
       - grafana:/var/lib/grafana
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
