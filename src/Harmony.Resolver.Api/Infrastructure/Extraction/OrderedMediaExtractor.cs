@@ -21,14 +21,14 @@ public sealed class OrderedMediaExtractor(IEnumerable<IExtractorAdapter> adapter
             catch (ExtractionException exception)
             {
                 lastFailure = exception;
-                logger.LogWarning("Extractor {Extractor} failed with {FailureCode} ({Detail}); trying the next adapter.",
-                    adapter.Name, exception.Code, exception.InnerException?.Message ?? "no detail");
+                logger.LogWarning("Extractor {Extractor} failed for {VideoId} with {FailureCode} ({Detail}); trying the next adapter.",
+                    adapter.Name, videoId, exception.Code, exception.InnerException?.Message ?? "no detail");
             }
             catch (Exception exception)
             {
                 lastFailure = new ExtractionException("adapter_unavailable", adapter.Name, exception);
-                logger.LogWarning(exception, "Extractor {Extractor} threw an unexpected exception; trying the next adapter.",
-                    adapter.Name);
+                logger.LogWarning(exception, "Extractor {Extractor} threw an unexpected exception for {VideoId}; trying the next adapter.",
+                    adapter.Name, videoId);
             }
         }
 

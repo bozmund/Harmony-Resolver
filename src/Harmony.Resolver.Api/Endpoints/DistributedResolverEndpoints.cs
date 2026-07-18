@@ -151,6 +151,8 @@ public static class DistributedResolverEndpoints
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
             metrics.ExtractionFailures.Add(1, new KeyValuePair<string, object?>("failure_code", "extraction_timeout"));
+            logger.LogWarning("Extraction timed out for {VideoId} after {DurationMs}ms, identity={IdentityHash}",
+                videoId, stopwatch.ElapsedMilliseconds, identity.Key);
             await tracks.MarkFailedAsync(lease, "extraction_timeout", clock.GetUtcNow() + TimeSpan.FromMinutes(1), CancellationToken.None);
             if (!context.Response.HasStarted)
                 await ExtractionFailed("extraction_timeout").ExecuteAsync(context);
@@ -159,6 +161,8 @@ public static class DistributedResolverEndpoints
         {
             var code = exception.Message is "object_too_large" or "lease_lost" ? exception.Message : "extraction_failed";
             metrics.ExtractionFailures.Add(1, new KeyValuePair<string, object?>("failure_code", code));
+            logger.LogWarning(exception, "Extraction failed for {VideoId} with {FailureCode} after {DurationMs}ms, identity={IdentityHash}",
+                videoId, code, stopwatch.ElapsedMilliseconds, identity.Key);
             await tracks.MarkFailedAsync(lease, code, clock.GetUtcNow() + TimeSpan.FromMinutes(1), CancellationToken.None);
             if (!context.Response.HasStarted)
                 await ExtractionFailed(code).ExecuteAsync(context);
