@@ -4,6 +4,15 @@ services:
     environment: { POSTGRES_DB: harmony, POSTGRES_USER: harmony, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?}" }
     volumes: [postgres:/var/lib/postgresql/data]
     healthcheck: { test: [CMD-SHELL, "pg_isready -U harmony"], interval: 5s, timeout: 3s, retries: 20 }
+  postgres-relay:
+    # Docker DNS can reach the private `postgres` service; the host cannot.
+    # Binding to loopback keeps this database access path private to SSH users.
+    image: alpine/socat
+    command: ["TCP-LISTEN:15432,fork,reuseaddr", "TCP:postgres:5432"]
+    ports: ["127.0.0.1:15432:15432"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address :9001

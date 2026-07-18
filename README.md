@@ -40,7 +40,13 @@ The public endpoints are available through Nginx. `/metrics` and `/internal/*` a
 
 ### Deploying to a bare VPS
 
-`deploy/bootstrap-oracle-vps.sh` sets up the full stack (Docker Engine, firewall rules, a root-owned secrets file, and a `harmony-resolver` systemd unit) on a plain Ubuntu VPS such as an Oracle Cloud Ampere A1 instance, using `compose.prod.yaml` — a production variant of `compose.yaml` that pulls the prebuilt `ghcr.io/bozmund/harmony-resolver-*` images instead of building, and fronts Nginx with Caddy for automatic Let's Encrypt HTTPS (see `deploy/Caddyfile`). Grafana is intentionally bound to `127.0.0.1` only; reach it with `ssh -L 3000:localhost:3000 <user>@<vps-ip>` rather than exposing it publicly.
+`deploy/bootstrap-oracle-vps.sh` sets up the full stack (Docker Engine, firewall rules, a root-owned secrets file, and a `harmony-resolver` systemd unit) on a plain Ubuntu VPS such as an Oracle Cloud Ampere A1 instance, using `compose.prod.yaml` — a production variant of `compose.yaml` that pulls the prebuilt `ghcr.io/bozmund/harmony-resolver-*` images instead of building, and fronts Nginx with Caddy for automatic Let's Encrypt HTTPS (see `deploy/Caddyfile`). Grafana and the PostgreSQL relay are intentionally bound to `127.0.0.1` only; reach them through SSH rather than exposing them publicly:
+
+```powershell
+ssh -N -L 3000:localhost:3000 -L 15432:localhost:15432 <user>@<vps-ip>
+```
+
+In Rider, create a PostgreSQL data source at `localhost:15432` using database `harmony`, user `harmony`, and the production `POSTGRES_PASSWORD`. Do not add Oracle Cloud or host firewall rules for ports `5432` or `15432`.
 
 Run `deploy/setup-ci-deploy-user.sh` once afterward to let `.github/workflows/deploy.yml` redeploy automatically after every successful image publish: it creates a minimally-privileged `deploy` user restricted by sudoers to exactly `systemctl restart harmony-resolver.service`, and prints an SSH keypair to register as the `VPS_HOST`/`VPS_SSH_KEY` repository secrets.
 
