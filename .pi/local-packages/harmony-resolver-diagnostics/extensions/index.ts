@@ -177,6 +177,20 @@ const getTraceTool = defineTool({
 	},
 });
 
+const recentPlaysTool = defineTool({
+	name: "get_recent_plays",
+	label: "Get Recent Plays",
+	description: "Lists the most recently served tracks, with cache status, duration, and hashed listener identity.",
+	promptSnippet: "Lists the most recently served tracks.",
+	parameters: Type.Object({
+		limit: Type.Number({ description: "Maximum number of recent plays to return." }),
+	}),
+	async execute(_toolCallId, params) {
+		const result = await callMcpTool("get_recent_plays", { limit: params.limit });
+		return { content: [{ type: "text", text: result.text }], isError: result.isError };
+	},
+});
+
 export default function harmonyResolverDiagnostics(pi: ExtensionAPI): void {
 	pi.registerTool(systemSnapshotTool);
 	pi.registerTool(dependencyHealthTool);
@@ -185,6 +199,7 @@ export default function harmonyResolverDiagnostics(pi: ExtensionAPI): void {
 	pi.registerTool(inspectTrackTool);
 	pi.registerTool(queryLogsTool);
 	pi.registerTool(getTraceTool);
+	pi.registerTool(recentPlaysTool);
 	pi.registerTool(queryMetricsTool);
 	pi.registerTool(deploymentInfoTool);
 	pi.registerTool(diagnosticCheckTool);

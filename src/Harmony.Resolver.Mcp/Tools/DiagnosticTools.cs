@@ -33,7 +33,7 @@ public sealed class DiagnosticTools(IHttpClientFactory clients)
         limit = Math.Clamp(limit, 1, 200);
         var end = DateTimeOffset.UtcNow;
         var start = end - TimeSpan.FromHours(hours);
-        return await QueryLokiAsync("{service_name=~\"harmony-resolver.*\"}", start, end, limit);
+        return await QueryLokiAsync("{service_name=~\"api-1|api-2|nginx|mcp\"}", start, end, limit);
     }
 
     [McpServerTool(Name = "get_trace", ReadOnly = true, Idempotent = true), Description("Returns sanitized trace correlation information.")]
@@ -42,7 +42,7 @@ public sealed class DiagnosticTools(IHttpClientFactory clients)
         if (traceId.Length is < 16 or > 64 || !traceId.All(Uri.IsHexDigit))
             throw new ArgumentException("traceId must be 16-64 hexadecimal characters.", nameof(traceId));
         var end = DateTimeOffset.UtcNow;
-        return QueryLokiAsync($"{{service_name=~\"harmony-resolver.*\"}} |= \"{traceId}\"", end - TimeSpan.FromHours(24), end, 200);
+        return QueryLokiAsync($"{{service_name=~\"api-1|api-2|nginx|mcp\"}} |= \"{traceId}\"", end - TimeSpan.FromHours(24), end, 200);
     }
 
     [McpServerTool(Name = "query_metrics", ReadOnly = true, Idempotent = true), Description("Returns the resolver Prometheus metric exposition.")]
@@ -50,6 +50,10 @@ public sealed class DiagnosticTools(IHttpClientFactory clients)
 
     [McpServerTool(Name = "get_deployment_info", ReadOnly = true, Idempotent = true), Description("Returns sanitized deployment information.")]
     public async Task<string> GetDeploymentInfo() => await GetSystemSnapshot();
+
+    [McpServerTool(Name = "get_recent_plays", ReadOnly = true, Idempotent = true), Description("Lists the most recently served tracks, with cache status, duration, and hashed listener identity.")]
+    public async Task<string> GetRecentPlays(int limit = 5) =>
+        await clients.CreateClient("resolver").GetStringAsync($"/internal/diagnostics/recent-plays?limit={Math.Clamp(limit, 1, 50)}");
 
     private async Task<string> QueryLokiAsync(string query, DateTimeOffset start, DateTimeOffset end, int limit)
     {

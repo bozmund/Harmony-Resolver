@@ -4,6 +4,7 @@ using System.Text.Json;
 using Harmony.Resolver.Api.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ResolverDbContext))]
-    partial class ResolverDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260718001804_AddPlayEvents")]
+    partial class AddPlayEvents
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

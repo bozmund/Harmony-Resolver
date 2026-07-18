@@ -8,6 +8,7 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
     public DbSet<TrackEntity> Tracks => Set<TrackEntity>();
     public DbSet<IngestionLeaseEntity> IngestionLeases => Set<IngestionLeaseEntity>();
     public DbSet<DiagnosticAuditEntity> DiagnosticAudits => Set<DiagnosticAuditEntity>();
+    public DbSet<PlayEventEntity> PlayEvents => Set<PlayEventEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -50,5 +51,16 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         audits.Property(x => x.ToolName).HasColumnName("tool_name").HasMaxLength(64);
         audits.Property(x => x.QuerySummary).HasColumnName("query_summary").HasColumnType("jsonb");
         audits.Property(x => x.OccurredAt).HasColumnName("occurred_at");
+
+        var plays = modelBuilder.Entity<PlayEventEntity>();
+        plays.ToTable("resolver_play_events");
+        plays.HasKey(x => x.Id);
+        plays.Property(x => x.Id).HasColumnName("id").UseIdentityAlwaysColumn();
+        plays.Property(x => x.VideoId).HasColumnName("video_id").HasMaxLength(11);
+        plays.Property(x => x.IdentityHash).HasColumnName("identity_hash").HasMaxLength(128);
+        plays.Property(x => x.Cache).HasColumnName("cache").HasMaxLength(16);
+        plays.Property(x => x.DurationMs).HasColumnName("duration_ms");
+        plays.Property(x => x.PlayedAt).HasColumnName("played_at");
+        plays.HasIndex(x => x.PlayedAt).HasDatabaseName("ix_resolver_play_events_played_at").IsDescending();
     }
 }

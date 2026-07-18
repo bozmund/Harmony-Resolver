@@ -67,7 +67,20 @@
       "title": "Resolver logs",
       "gridPos": { "x": 0, "y": 21, "w": 24, "h": 10 },
       "datasource": { "type": "loki", "uid": "Loki" },
-      "targets": [{ "expr": "{service_name=~\"harmony-resolver.*\"}" }]
+      "targets": [{ "expr": "{service_name=~\"api-1|api-2|nginx|mcp\"}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Audio serve p95 latency by cache status",
+      "gridPos": { "x": 0, "y": 31, "w": 12, "h": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(resolver_audio_serve_duration_seconds_bucket[5m])) by (le, cache))", "legendFormat": "{{cache}}" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hit rate",
+      "gridPos": { "x": 12, "y": 31, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum(rate(resolver_audio_serve_duration_seconds_count{cache=\"hit\"}[5m])) / sum(rate(resolver_audio_serve_duration_seconds_count[5m]))", "legendFormat": "hit rate" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
     }
   ]
 }

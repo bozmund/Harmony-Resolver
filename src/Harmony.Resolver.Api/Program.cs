@@ -50,12 +50,14 @@ else
 builder.Services.AddSingleton<ResolverDiagnostics>();
 builder.Services.AddSingleton<ReadinessProbe>();
 builder.Services.AddSingleton<FaultInjectionState>();
+builder.Services.AddSingleton<ResolverMetrics>();
 var postgresConnection = builder.Configuration.GetConnectionString("PostgreSql");
 if (!string.IsNullOrWhiteSpace(postgresConnection))
 {
     builder.Services.AddPooledDbContextFactory<ResolverDbContext>(options => options.UseNpgsql(postgresConnection));
     builder.Services.AddSingleton<ITrackRepository, PostgresTrackRepository>();
     builder.Services.AddSingleton<DiagnosticAuditWriter>();
+    builder.Services.AddSingleton<PlayHistoryWriter>();
 }
 var storage = builder.Configuration.GetSection("ObjectStorage").Get<ObjectStorageOptions>();
 if (storage is not null && !string.IsNullOrWhiteSpace(storage.Endpoint))
@@ -113,7 +115,7 @@ builder.Services.AddOpenTelemetry().ConfigureResource(r => r.AddService("harmony
         if (!string.IsNullOrWhiteSpace(otlp))
             t.AddOtlpExporter(o => o.Endpoint = new Uri(otlp));
     })
-    .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddPrometheusExporter());
+    .WithMetrics(m => m.AddMeter(ResolverMetrics.MeterName).AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddPrometheusExporter());
 
 var app = builder.Build();
 if (runMigrations)
@@ -234,6 +236,8 @@ if (!string.IsNullOrWhiteSpace(postgresConnection))
         VideoIds.IsValid(videoId) ? Results.Ok(await tracks.GetAsync(videoId, cancellationToken)) : Results.BadRequest());
     app.MapGet("/internal/diagnostics/failures", async (int? limit, ITrackRepository tracks, TimeProvider clock, CancellationToken cancellationToken) =>
         Results.Ok(await tracks.ListFailuresAsync(clock.GetUtcNow() - TimeSpan.FromHours(24), Math.Clamp(limit ?? 50, 1, 200), cancellationToken)));
+    app.MapGet("/internal/diagnostics/recent-plays", async (int? limit, PlayHistoryWriter playHistory, CancellationToken cancellationToken) =>
+        Results.Ok(await playHistory.GetRecentAsync(Math.Clamp(limit ?? 5, 1, 50), cancellationToken)));
     app.MapPost("/internal/diagnostics/audit", async (DiagnosticAuditRequest request, DiagnosticAuditWriter audit, CancellationToken cancellationToken) =>
     {
         if (request.SubjectHash.Length is < 16 or > 128 || request.ToolName.Length is < 1 or > 64)

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.IO.Pipelines;
 using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Configuration;
+using Harmony.Resolver.Api.Diagnostics;
 using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Infrastructure.Security;
 
@@ -33,7 +35,10 @@ public static class DistributedResolverEndpoints
         ResolverOptions options,
         TimeProvider clock,
         IQuotaService quotas,
-        RequestIdentityResolver identities)
+        RequestIdentityResolver identities,
+        ResolverMetrics metrics,
+        PlayHistoryWriter playHistory,
+        ILogger<Program> logger)
     {
         if (!VideoIds.IsValid(videoId))
         {
@@ -42,6 +47,7 @@ public static class DistributedResolverEndpoints
         }
 
         var identity = identities.Resolve(context);
+        var stopwatch = Stopwatch.StartNew();
 
         var track = await tracks.GetAsync(videoId, context.RequestAborted);
         if (track is { Status: TrackStatus.Ready, ObjectKey: not null, ContentLength: not null, ETag: not null })
@@ -49,6 +55,7 @@ public static class DistributedResolverEndpoints
             await using var readyPermit = await quotas.TryAcquireResponseAsync(identity, context.RequestAborted);
             if (readyPermit is null) { await ResponseLimited(context); return; }
             await ServeReadyAsync(context, tracks, objects, track, options, clock);
+            await RecordServedAsync(metrics, playHistory, logger, videoId, "hit", stopwatch.ElapsedMilliseconds, identity.Key);
             return;
         }
 
@@ -139,9 +146,11 @@ public static class DistributedResolverEndpoints
                 throw new InvalidOperationException("lease_lost");
             }
 
+            await RecordServedAsync(metrics, playHistory, logger, videoId, "miss", stopwatch.ElapsedMilliseconds, identity.Key);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
+            metrics.ExtractionFailures.Add(1, new KeyValuePair<string, object?>("failure_code", "extraction_timeout"));
             await tracks.MarkFailedAsync(lease, "extraction_timeout", clock.GetUtcNow() + TimeSpan.FromMinutes(1), CancellationToken.None);
             if (!context.Response.HasStarted)
                 await ExtractionFailed("extraction_timeout").ExecuteAsync(context);
@@ -149,9 +158,27 @@ public static class DistributedResolverEndpoints
         catch (Exception exception)
         {
             var code = exception.Message is "object_too_large" or "lease_lost" ? exception.Message : "extraction_failed";
+            metrics.ExtractionFailures.Add(1, new KeyValuePair<string, object?>("failure_code", code));
             await tracks.MarkFailedAsync(lease, code, clock.GetUtcNow() + TimeSpan.FromMinutes(1), CancellationToken.None);
             if (!context.Response.HasStarted)
                 await ExtractionFailed(code).ExecuteAsync(context);
+        }
+    }
+
+    private static async Task RecordServedAsync(
+        ResolverMetrics metrics, PlayHistoryWriter playHistory, ILogger logger,
+        string videoId, string cache, long durationMs, string identityHash)
+    {
+        metrics.AudioServeDuration.Record(durationMs / 1000.0, new KeyValuePair<string, object?>("cache", cache));
+        logger.LogInformation("Served {VideoId} cache={Cache} durationMs={DurationMs} identity={IdentityHash}",
+            videoId, cache, durationMs, identityHash);
+        try
+        {
+            await playHistory.WriteAsync(videoId, identityHash, cache, durationMs, CancellationToken.None);
+        }
+        catch
+        {
+            // Best-effort history write; never fail an already-served response over this.
         }
     }
 

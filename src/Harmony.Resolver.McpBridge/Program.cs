@@ -129,6 +129,8 @@ public sealed class BridgeTools(RemoteMcpClient remote)
     public Task<string> Deployment(CancellationToken cancellationToken) => Call("get_deployment_info", null, cancellationToken);
     [McpServerTool(Name = "run_diagnostic_check", ReadOnly = true, Idempotent = true), Description("Runs standard diagnostics.")]
     public Task<string> Check(CancellationToken cancellationToken) => Call("run_diagnostic_check", null, cancellationToken);
+    [McpServerTool(Name = "get_recent_plays", ReadOnly = true, Idempotent = true), Description("Lists the most recently served tracks.")]
+    public Task<string> RecentPlays(int limit, CancellationToken cancellationToken) => Call("get_recent_plays", new Dictionary<string, object?> { ["limit"] = limit }, cancellationToken);
 
     private Task<string> Call(string name, IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) =>
         remote.CallAsync(name, arguments, cancellationToken);
