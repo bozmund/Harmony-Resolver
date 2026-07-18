@@ -18,6 +18,10 @@ public sealed class PostgresTrackRepository(
                 entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt);
     }
 
+    // Stays raw SQL: needs a native atomic INSERT ... ON CONFLICT DO UPDATE ... WHERE upsert, which
+    // ExecuteUpdateAsync can't express (it only updates rows that already match a Where predicate,
+    // it can't insert-or-update in one statement). This is what keeps concurrent lease acquisition
+    // race-free — see PostgresTrackRepositoryTests.Twenty_concurrent_callers_produce_exactly_one_lease_winner.
     public async Task<IngestionLease?> TryAcquireLeaseAsync(
         string videoId, Guid ownerId, TimeSpan duration, CancellationToken cancellationToken)
     {
@@ -65,11 +69,9 @@ public sealed class PostgresTrackRepository(
         var now = clock.GetUtcNow();
         var expiresAt = now + duration;
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        var updated = await db.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE resolver_ingestion_leases
-            SET expires_at = {expiresAt}
-            WHERE video_id = {lease.VideoId} AND owner_id = {lease.OwnerId} AND expires_at > {now}
-            """, cancellationToken);
+        var updated = await db.IngestionLeases
+            .Where(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId && x.ExpiresAt > now)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, expiresAt), cancellationToken);
         return updated == 1;
     }
 
@@ -77,15 +79,11 @@ public sealed class PostgresTrackRepository(
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            DELETE FROM resolver_ingestion_leases
-            WHERE video_id = {lease.VideoId} AND owner_id = {lease.OwnerId}
-            """, cancellationToken);
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            DELETE FROM resolver_tracks AS tracks
-            WHERE tracks.video_id = {lease.VideoId} AND tracks.status = 'ingesting'
-              AND NOT EXISTS (SELECT 1 FROM resolver_ingestion_leases AS leases WHERE leases.video_id = tracks.video_id)
-            """, cancellationToken);
+        await db.IngestionLeases.Where(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId)
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.Tracks.Where(x => x.VideoId == lease.VideoId && x.Status == "ingesting"
+                && !db.IngestionLeases.Any(l => l.VideoId == x.VideoId))
+            .ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -102,11 +100,11 @@ public sealed class PostgresTrackRepository(
     {
         var now = clock.GetUtcNow();
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE resolver_tracks
-            SET last_accessed_at = {now}, expires_at = {expiresAt}, updated_at = {now}
-            WHERE video_id = {videoId} AND status = 'ready'
-            """, cancellationToken);
+        await db.Tracks.Where(x => x.VideoId == videoId && x.Status == "ready")
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.LastAccessedAt, now)
+                .SetProperty(x => x.ExpiresAt, expiresAt)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken);
     }
 
     public async Task<IReadOnlyList<StoredTrack>> ListExpiredAsync(
@@ -154,25 +152,26 @@ public sealed class PostgresTrackRepository(
         var now = clock.GetUtcNow();
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var updated = await db.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE resolver_tracks AS tracks
-            SET status = {status}, object_key = {objectKey}, content_length = {contentLength}, etag = {etag},
-                failure_code = {failureCode}, retry_after = {retryAfter}, expires_at = {expiresAt}, updated_at = {now}
-            FROM resolver_ingestion_leases AS leases
-            WHERE tracks.video_id = {lease.VideoId}
-              AND leases.video_id = tracks.video_id
-              AND leases.owner_id = {lease.OwnerId}
-            """, cancellationToken);
+        var updated = await db.Tracks
+            .Where(t => t.VideoId == lease.VideoId
+                && db.IngestionLeases.Any(l => l.VideoId == t.VideoId && l.OwnerId == lease.OwnerId))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Status, status)
+                .SetProperty(x => x.ObjectKey, objectKey)
+                .SetProperty(x => x.ContentLength, contentLength)
+                .SetProperty(x => x.ETag, etag)
+                .SetProperty(x => x.FailureCode, failureCode)
+                .SetProperty(x => x.RetryAfter, retryAfter)
+                .SetProperty(x => x.ExpiresAt, expiresAt)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken);
         if (updated != 1)
         {
             await transaction.RollbackAsync(cancellationToken);
             return false;
         }
 
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            DELETE FROM resolver_ingestion_leases
-            WHERE video_id = {lease.VideoId} AND owner_id = {lease.OwnerId}
-            """, cancellationToken);
+        await db.IngestionLeases.Where(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId)
+            .ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
     }

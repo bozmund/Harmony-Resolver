@@ -59,6 +59,19 @@ public sealed class PostgresTrackRepositoryTests : IAsyncLifetime
         Assert.Equal(TrackStatus.Ready, (await repository.GetAsync("aqz-KE-bpKQ", CancellationToken.None))!.Status);
     }
 
+    [Fact]
+    public async Task Abandoning_a_lease_removes_the_orphaned_ingesting_track()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        var lease = await repository.TryAcquireLeaseAsync("zAbandon123", Guid.NewGuid(), TimeSpan.FromMinutes(2), CancellationToken.None);
+        Assert.NotNull(lease);
+        Assert.Equal(TrackStatus.Ingesting, (await repository.GetAsync("zAbandon123", CancellationToken.None))!.Status);
+
+        await repository.AbandonLeaseAsync(lease!, CancellationToken.None);
+
+        Assert.Null(await repository.GetAsync("zAbandon123", CancellationToken.None));
+    }
+
     private sealed class TestDbContextFactory(DbContextOptions<ResolverDbContext> options) : IDbContextFactory<ResolverDbContext>
     {
         public ResolverDbContext CreateDbContext() => new(options);
