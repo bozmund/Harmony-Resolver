@@ -92,24 +92,52 @@ else
   echo "    Existing secrets preserved."
 fi
 
-echo "==> Generating a self-signed TLS cert for RabbitMQ (port 5671)"
-# RabbitMQ's public AMQPS listener needs a cert. A self-signed pair keeps the wire encrypted (so the
-# broker password is never sent in clear) without coupling to Caddy's cert lifecycle; downloaders connect
-# with amqps and can pin this cert. Owned by uid 999 (the rabbitmq container user) so the RO mount is
-# readable, with the private key kept 600 in a 700 dir.
+echo "==> Preparing a private CA and TLS server certificate for RabbitMQ (port 5671)"
+# RabbitMQ's public AMQPS listener needs a certificate. A dedicated private CA signs a separate server
+# certificate, which RabbitMQ accepts as a proper trust bundle. Downloaders pin the server certificate.
+# Resolve the RabbitMQ account from the image rather than assuming a numeric UID: image releases can change it.
 CERT_DIR="$ENV_DIR/rabbitmq-certs"
-if [ ! -f "$CERT_DIR/tls.crt" ]; then
+RABBITMQ_UID="$(docker run --rm --entrypoint id rabbitmq:4-management-alpine -u rabbitmq)"
+RABBITMQ_GID="$(docker run --rm --entrypoint id rabbitmq:4-management-alpine -g rabbitmq)"
+if [ ! -f "$CERT_DIR/ca.crt" ]; then
+  if [ -d "$CERT_DIR" ] && { [ -f "$CERT_DIR/tls.crt" ] || [ -f "$CERT_DIR/tls.key" ]; }; then
+    LEGACY_CERT_DIR="$ENV_DIR/rabbitmq-certs-legacy-$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$LEGACY_CERT_DIR"
+    cp -a "$CERT_DIR"/. "$LEGACY_CERT_DIR"/
+    rm -rf "$CERT_DIR"
+    echo "    Backed up the previous single-certificate layout to $LEGACY_CERT_DIR."
+  fi
   mkdir -p "$CERT_DIR"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-    -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.crt" \
+  openssl req -x509 -new -newkey rsa:4096 -nodes -days 3650 \
+    -keyout "$CERT_DIR/ca.key" -out "$CERT_DIR/ca.crt" \
+    -subj "/CN=Harmony Resolver RabbitMQ CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "subjectKeyIdentifier=hash"
+  openssl req -new -newkey rsa:2048 -nodes \
+    -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.csr" \
     -subj "/CN=harmony-resolver.duckdns.org"
-  chown -R 999:999 "$CERT_DIR"
+  cat > "$CERT_DIR/server.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:harmony-resolver.duckdns.org
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+EOF
+  openssl x509 -req -in "$CERT_DIR/tls.csr" -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" \
+    -CAcreateserial -out "$CERT_DIR/tls.crt" -days 825 -sha256 -extfile "$CERT_DIR/server.ext"
+  rm -f "$CERT_DIR/tls.csr" "$CERT_DIR/ca.srl" "$CERT_DIR/server.ext"
+  chown "$RABBITMQ_UID:$RABBITMQ_GID" "$CERT_DIR"
+  chown "$RABBITMQ_UID:$RABBITMQ_GID" "$CERT_DIR/ca.crt" "$CERT_DIR/tls.crt" "$CERT_DIR/tls.key"
   chmod 700 "$CERT_DIR"
+  chmod 600 "$CERT_DIR/ca.key"
+  chmod 644 "$CERT_DIR/ca.crt"
   chmod 600 "$CERT_DIR/tls.key"
   chmod 644 "$CERT_DIR/tls.crt"
-  echo "    Generated a 10-year self-signed cert at $CERT_DIR."
+  echo "    Generated a private CA and CA-signed server certificate at $CERT_DIR."
 else
-  echo "    Already exists, leaving untouched."
+  echo "    Existing private CA and server certificate found, leaving untouched."
 fi
 RABBITMQ_CERT_SHA256="$(openssl x509 -in "$CERT_DIR/tls.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')"
 echo "    Downloader RABBITMQ_CERT_SHA256=$RABBITMQ_CERT_SHA256"

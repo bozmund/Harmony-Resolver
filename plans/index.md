@@ -12,3 +12,4 @@
 | 2026-07-18 | [Private PostgreSQL access for Rider](2026-07-18_1427_private_postgres_rider_access.md) | Implemented |
 | 2026-07-19 | [Delegated extraction: credentialed downloader fleet](2026-07-19_0138_delegated_extraction_downloader_fleet.md) | Implemented |
 | 2026-07-19 | [RabbitMQ job notifications for the downloader fleet](2026-07-19_1240_rabbitmq_job_notifications.md) | Implemented |
+| 2026-07-19 | [RabbitMQ TLS CA migration](2026-07-19_2045_rabbitmq_tls_ca_migration.md) | In progress |
