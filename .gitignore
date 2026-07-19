@@ -4,9 +4,9 @@
 .vs/
 .vscode/*.local.json
 .env
+.env.local
 artifacts/
 data/
 *.user
 *.suo
 compose.*.local.yml
-

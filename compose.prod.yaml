@@ -65,7 +65,9 @@ services:
       Quotas__IdentityHmacKey: "${IDENTITY_HMAC_KEY:?}"
       Auth0__Domain: dev-bozmund.eu.auth0.com
       Auth0__Audience: "${AUTH0_AUDIENCE:-}"
-      Resolver__ExtractionMode: "${RESOLVER_EXTRACTION_MODE:-Inline}"
+      # Production relies on residential downloader agents; keep this deployment-owned so GitHub Actions
+      # applies it on every restart instead of relying on a mutable VPS environment file.
+      Resolver__ExtractionMode: "Delegated"
       Resolver__MaxDurationMinutes: "9"
       # In Delegated mode the API publishes doorbells over the internal plaintext AMQP port. Audio
       # still travels over authenticated HTTPS and home downloaders connect over pinned TLS on 5671.

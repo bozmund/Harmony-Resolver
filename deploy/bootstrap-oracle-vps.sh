@@ -69,7 +69,6 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "AUDIT_HMAC_KEY=$(openssl rand -hex 32)"
     echo "RABBITMQ_PASSWORD=$(openssl rand -hex 32)"
     echo "AUTH0_AUDIENCE=https://harmony-resolver"
-    echo "RESOLVER_EXTRACTION_MODE=Inline"
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   chown root:root "$ENV_FILE"
@@ -82,10 +81,6 @@ else
   if ! grep -q '^AUTH0_AUDIENCE=' "$ENV_FILE"; then
     echo "AUTH0_AUDIENCE=https://harmony-resolver" >> "$ENV_FILE"
     echo "    Added the resolver Auth0 audience."
-  fi
-  if ! grep -q '^RESOLVER_EXTRACTION_MODE=' "$ENV_FILE"; then
-    echo "RESOLVER_EXTRACTION_MODE=Inline" >> "$ENV_FILE"
-    echo "    Added safe initial extraction mode (Inline)."
   fi
   chmod 600 "$ENV_FILE"
   chown root:root "$ENV_FILE"
