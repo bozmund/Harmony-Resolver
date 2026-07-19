@@ -10,3 +10,5 @@
 | 2026-07-18 | [Cross-agent MCP diagnostics (Claude Code, Codex, pi)](2026-07-18_0100_cross_agent_mcp_diagnostics.md) | In progress |
 | 2026-07-18 | [Grafana dashboard rework (Postgres tables, VPS health)](2026-07-18_1130_grafana_dashboard_rework.md) | In progress |
 | 2026-07-18 | [Private PostgreSQL access for Rider](2026-07-18_1427_private_postgres_rider_access.md) | Implemented |
+| 2026-07-19 | [Delegated extraction: credentialed downloader fleet](2026-07-19_0138_delegated_extraction_downloader_fleet.md) | Implemented |
+| 2026-07-19 | [RabbitMQ job notifications for the downloader fleet](2026-07-19_1240_rabbitmq_job_notifications.md) | Implemented |

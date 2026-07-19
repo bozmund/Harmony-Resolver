@@ -1,0 +1,35 @@
+# Development-only overlay for exercising the delegated downloader workflow locally.
+#
+# Start with:
+#   docker compose -f compose.yaml -f compose.delegated.yaml up --build -d
+#
+# RabbitMQ is deliberately plaintext here because both published ports are loopback-local
+# development endpoints. Production uses compose.prod.yaml and TLS on port 5671 instead.
+services:
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: harmony
+      RABBITMQ_DEFAULT_PASS: development-only-rabbitmq
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: [CMD, "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api-1:
+    environment:
+      Resolver__ExtractionMode: Delegated
+      RabbitMq__Uri: amqp://harmony:development-only-rabbitmq@rabbitmq:5672/
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+
+  api-2:
+    environment:
+      Resolver__ExtractionMode: Delegated
+      RabbitMq__Uri: amqp://harmony:development-only-rabbitmq@rabbitmq:5672/
+    depends_on:
+      rabbitmq: { condition: service_healthy }

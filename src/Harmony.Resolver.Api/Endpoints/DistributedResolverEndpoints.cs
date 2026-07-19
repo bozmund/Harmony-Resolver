@@ -38,6 +38,7 @@ public static class DistributedResolverEndpoints
         RequestIdentityResolver identities,
         ResolverMetrics metrics,
         PlayHistoryWriter playHistory,
+        IJobNotifier jobNotifier,
         ILogger<Program> logger)
     {
         if (!VideoIds.IsValid(videoId))
@@ -69,6 +70,24 @@ public static class DistributedResolverEndpoints
 
         if (track?.Status == TrackStatus.Ingesting)
         {
+            await IngestionInProgress(context).ExecuteAsync(context);
+            return;
+        }
+
+        // Delegated mode: the server never contacts YouTube. Record the cache miss as a pending job
+        // for the downloader fleet and tell the listener to poll. The ingestion quota still applies so
+        // a single listener can't flood the job queue.
+        if (options.ExtractionMode == ExtractionMode.Delegated)
+        {
+            if (!await quotas.TryConsumeIngestionAsync(identity, CancellationToken.None))
+            {
+                context.Response.Headers.RetryAfter = "3600";
+                await Results.Problem(statusCode: StatusCodes.Status429TooManyRequests, title: "Ingestion quota exceeded",
+                    extensions: new Dictionary<string, object?> { ["code"] = "ingestion_rate_limited" }).ExecuteAsync(context);
+                return;
+            }
+            await tracks.EnqueueAsync(videoId, CancellationToken.None);
+            await jobNotifier.NotifyAsync(videoId, CancellationToken.None);
             await IngestionInProgress(context).ExecuteAsync(context);
             return;
         }

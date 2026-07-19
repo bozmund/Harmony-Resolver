@@ -32,6 +32,7 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         tracks.Property(x => x.UpdatedAt).HasColumnName("updated_at");
         tracks.HasIndex(x => x.ExpiresAt).HasDatabaseName("ix_resolver_tracks_expiry").HasFilter("status = 'ready'");
         tracks.HasIndex(x => x.UpdatedAt).HasDatabaseName("ix_resolver_tracks_failures").HasFilter("status = 'failed'").IsDescending();
+        tracks.HasIndex(x => x.CreatedAt).HasDatabaseName("ix_resolver_tracks_pending").HasFilter("status = 'ingesting'");
 
         var leases = modelBuilder.Entity<IngestionLeaseEntity>();
         leases.ToTable("resolver_ingestion_leases", table => table.HasCheckConstraint("ck_resolver_leases_expiry", "expires_at > acquired_at"));

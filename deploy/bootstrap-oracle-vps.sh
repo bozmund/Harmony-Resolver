@@ -30,23 +30,26 @@ else
   echo "Docker already installed, skipping."
 fi
 
-echo "==> Opening 80/443 on the host firewall"
+echo "==> Opening 80/443 and 5671 on the host firewall"
 # Stock OCI Ubuntu images ship iptables rules that DROP everything but SSH by
 # default, in addition to the cloud-level Security List/NSG. Both layers need
 # 80/443 open, or Let's Encrypt validation and HTTPS traffic will silently fail.
+# 5671 is RabbitMQ's TLS AMQP port — home downloaders (behind NAT) dial in here.
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   ufw allow 80/tcp
   ufw allow 443/tcp
+  ufw allow 5671/tcp
 else
-  iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-  iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+  for port in 80 443 5671; do
+    iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$port" -j ACCEPT
+  done
   if command -v netfilter-persistent >/dev/null 2>&1; then
     netfilter-persistent save
   elif [ -d /etc/iptables ]; then
     iptables-save > /etc/iptables/rules.v4
   fi
 fi
-echo "    Reminder: also open TCP 80 and 443 in the OCI Security List / Network Security Group for this VPS's subnet — that cannot be done from inside the instance."
+echo "    Reminder: also open TCP 80, 443, and 5671 in the OCI Security List / Network Security Group for this VPS's subnet — that cannot be done from inside the instance."
 
 echo "==> Fetching Harmony Resolver into $INSTALL_DIR"
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -64,13 +67,52 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 32)"
     echo "IDENTITY_HMAC_KEY=$(openssl rand -hex 32)"
     echo "AUDIT_HMAC_KEY=$(openssl rand -hex 32)"
+    echo "RABBITMQ_PASSWORD=$(openssl rand -hex 32)"
+    echo "AUTH0_AUDIENCE=https://harmony-resolver"
+    echo "RESOLVER_EXTRACTION_MODE=Inline"
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   chown root:root "$ENV_FILE"
   echo "    Generated new random secrets."
 else
+  if ! grep -q '^RABBITMQ_PASSWORD=' "$ENV_FILE"; then
+    echo "RABBITMQ_PASSWORD=$(openssl rand -hex 32)" >> "$ENV_FILE"
+    echo "    Added a generated RabbitMQ password."
+  fi
+  if ! grep -q '^AUTH0_AUDIENCE=' "$ENV_FILE"; then
+    echo "AUTH0_AUDIENCE=https://harmony-resolver" >> "$ENV_FILE"
+    echo "    Added the resolver Auth0 audience."
+  fi
+  if ! grep -q '^RESOLVER_EXTRACTION_MODE=' "$ENV_FILE"; then
+    echo "RESOLVER_EXTRACTION_MODE=Inline" >> "$ENV_FILE"
+    echo "    Added safe initial extraction mode (Inline)."
+  fi
+  chmod 600 "$ENV_FILE"
+  chown root:root "$ENV_FILE"
+  echo "    Existing secrets preserved."
+fi
+
+echo "==> Generating a self-signed TLS cert for RabbitMQ (port 5671)"
+# RabbitMQ's public AMQPS listener needs a cert. A self-signed pair keeps the wire encrypted (so the
+# broker password is never sent in clear) without coupling to Caddy's cert lifecycle; downloaders connect
+# with amqps and can pin this cert. Owned by uid 999 (the rabbitmq container user) so the RO mount is
+# readable, with the private key kept 600 in a 700 dir.
+CERT_DIR="$ENV_DIR/rabbitmq-certs"
+if [ ! -f "$CERT_DIR/tls.crt" ]; then
+  mkdir -p "$CERT_DIR"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.crt" \
+    -subj "/CN=harmony-resolver.duckdns.org"
+  chown -R 999:999 "$CERT_DIR"
+  chmod 700 "$CERT_DIR"
+  chmod 600 "$CERT_DIR/tls.key"
+  chmod 644 "$CERT_DIR/tls.crt"
+  echo "    Generated a 10-year self-signed cert at $CERT_DIR."
+else
   echo "    Already exists, leaving untouched."
 fi
+RABBITMQ_CERT_SHA256="$(openssl x509 -in "$CERT_DIR/tls.crt" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')"
+echo "    Downloader RABBITMQ_CERT_SHA256=$RABBITMQ_CERT_SHA256"
 
 echo "==> Installing systemd unit"
 cp "$INSTALL_DIR/deploy/systemd/harmony-resolver.service" /etc/systemd/system/harmony-resolver.service

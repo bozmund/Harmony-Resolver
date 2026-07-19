@@ -1,0 +1,24 @@
+# systemd unit for running the downloader agent directly (without Docker) on a home Linux machine.
+#
+#   sudo cp harmony-resolver-downloader.service /etc/systemd/system/
+#   sudo mkdir -p /etc/harmony-resolver
+#   sudo cp .env.example /etc/harmony-resolver/downloader.env   # then edit with real credentials
+#   # publish the agent somewhere on the host, e.g. /opt/harmony-resolver-downloader:
+#   #   dotnet publish src/Harmony.Resolver.Downloader -c Release -o /opt/harmony-resolver-downloader
+#   # ensure yt-dlp is installed and on PATH (pipx install yt-dlp), or set YTDLP_PATH in the env file.
+#   sudo systemctl daemon-reload && sudo systemctl enable --now harmony-resolver-downloader
+[Unit]
+Description=Harmony Resolver downloader agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/harmony-resolver/downloader.env
+ExecStart=/usr/bin/dotnet /opt/harmony-resolver-downloader/Harmony.Resolver.Downloader.dll
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

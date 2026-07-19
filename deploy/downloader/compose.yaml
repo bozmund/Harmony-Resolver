@@ -1,0 +1,17 @@
+# Home downloader agent — run this on a machine with a residential IP (not the VPS).
+#
+#   cd deploy/downloader
+#   cp .env.example .env        # fill in RESOLVER_BASE_URL + Auth0 tracks:ingest M2M credentials
+#   docker compose up -d --build
+#
+# The agent claims ingestion jobs from the resolver, fetches audio with yt-dlp on this machine's IP,
+# and uploads the raw file for the resolver to normalize and cache.
+services:
+  downloader:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.downloader
+    image: ghcr.io/bozmund/harmony-resolver-downloader:latest
+    restart: unless-stopped
+    env_file: .env
+    # yt-dlp occasionally needs to refresh; keeping the image current is a `docker compose pull/build`.

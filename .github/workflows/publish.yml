@@ -44,3 +44,18 @@ jobs:
           push: true
           tags: ${{ steps.mcp-meta.outputs.tags }}
           labels: ${{ steps.mcp-meta.outputs.labels }}
+      - uses: docker/metadata-action@v5
+        id: downloader-meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/harmony-resolver-downloader
+          tags: |
+            type=sha
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.downloader
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.downloader-meta.outputs.tags }}
+          labels: ${{ steps.downloader-meta.outputs.labels }}

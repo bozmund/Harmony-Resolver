@@ -193,6 +193,10 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_resolver_tracks_failures")
                         .HasFilter("status = 'failed'");
 
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("ix_resolver_tracks_pending")
+                        .HasFilter("status = 'ingesting'");
+
                     b.ToTable("resolver_tracks", null, t =>
                         {
                             t.HasCheckConstraint("ck_resolver_tracks_ready_object", "(status = 'ready') = (object_key IS NOT NULL)");

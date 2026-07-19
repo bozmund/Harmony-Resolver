@@ -6,6 +6,7 @@ using Harmony.Resolver.Api.Diagnostics;
 using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Endpoints;
 using Harmony.Resolver.Api.Infrastructure.Extraction;
+using Harmony.Resolver.Api.Infrastructure.Messaging;
 using Harmony.Resolver.Api.Infrastructure.Persistence;
 using Harmony.Resolver.Api.Infrastructure.Quotas;
 using Harmony.Resolver.Api.Infrastructure.Security;
@@ -28,14 +29,24 @@ var runMigrations = args.Contains("--migrate", StringComparer.Ordinal)
 builder.Services.Configure<ResolverOptions>(builder.Configuration.GetSection("Resolver"));
 builder.Services.Configure<ObjectStorageOptions>(builder.Configuration.GetSection("ObjectStorage"));
 builder.Services.Configure<QuotaOptions>(builder.Configuration.GetSection("Quotas"));
+builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection("RabbitMq"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ResolverOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ObjectStorageOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<QuotaOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RabbitMqOptions>>().Value);
 builder.Services.AddSingleton<RequestIdentityResolver>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ITrackCatalog, MemoryTrackCatalog>();
 var resolverConfiguration = builder.Configuration.GetSection("Resolver").Get<ResolverOptions>() ?? new ResolverOptions();
-if (resolverConfiguration.UseFakeExtractor)
+if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated)
+{
+    // The server never contacts YouTube in Delegated mode: cache misses are queued for the
+    // downloader fleet, which uploads raw audio for the server to normalize. FfmpegNormalizer is
+    // still needed server-side to canonicalize those uploads to Ogg Opus.
+    builder.Services.AddSingleton<FfmpegNormalizer>();
+    builder.Services.AddSingleton<IMediaExtractor, DelegatedExtractionPlaceholder>();
+}
+else if (resolverConfiguration.UseFakeExtractor)
 {
     builder.Services.AddSingleton<IMediaExtractor, DeterministicExtractor>();
 }
@@ -47,6 +58,11 @@ else
     builder.Services.AddSingleton<IExtractorAdapter, YoutubeExplodeExtractorAdapter>();
     builder.Services.AddSingleton<IMediaExtractor, OrderedMediaExtractor>();
 }
+var rabbitConfiguration = builder.Configuration.GetSection("RabbitMq").Get<RabbitMqOptions>() ?? new RabbitMqOptions();
+if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && rabbitConfiguration.Enabled)
+    builder.Services.AddSingleton<IJobNotifier, RabbitMqJobNotifier>();
+else
+    builder.Services.AddSingleton<IJobNotifier, NoopJobNotifier>();
 builder.Services.AddSingleton<ResolverDiagnostics>();
 builder.Services.AddSingleton<ReadinessProbe>();
 builder.Services.AddSingleton<FaultInjectionState>();
@@ -72,6 +88,10 @@ if (storage is not null && !string.IsNullOrWhiteSpace(storage.Endpoint))
     builder.Services.AddHostedService<ObjectStoreInitializer>();
     if (!string.IsNullOrWhiteSpace(postgresConnection)) builder.Services.AddHostedService<ExpiredObjectJanitor>();
 }
+if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && !string.IsNullOrWhiteSpace(postgresConnection))
+    builder.Services.AddHostedService<StuckJobReaper>();
+if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && rabbitConfiguration.Enabled && !string.IsNullOrWhiteSpace(postgresConnection))
+    builder.Services.AddHostedService<JobRepublisher>();
 var valkeyConnection = builder.Configuration.GetConnectionString("Valkey");
 if (!string.IsNullOrWhiteSpace(valkeyConnection))
 {
@@ -98,15 +118,28 @@ builder.Services.AddOpenApi();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase)));
 var authDomain = builder.Configuration["Auth0:Domain"];
 var audience = builder.Configuration["Auth0:Audience"];
-if (!string.IsNullOrWhiteSpace(authDomain) && !string.IsNullOrWhiteSpace(audience))
+var authEnabled = !string.IsNullOrWhiteSpace(authDomain) && !string.IsNullOrWhiteSpace(audience);
+if (authEnabled)
 {
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
     {
-        o.Authority = $"https://{authDomain.TrimEnd('/')}/";
+        o.Authority = $"https://{authDomain!.TrimEnd('/')}/";
         o.Audience = audience;
         o.TokenValidationParameters = new TokenValidationParameters { ValidateIssuer = true, ValidateAudience = true, ValidateLifetime = true, ValidateIssuerSigningKey = true };
     });
+    // Downloader fleet authorization. Mirrors the MCP service's diagnostics:read policy: a valid
+    // Auth0 token whose permissions/scope claim contains tracks:ingest. Applied only to /v1/worker/*.
+    builder.Services.AddAuthorization(options => options.AddPolicy(WorkerIngestionEndpoints.IngestPolicy, policy =>
+        policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            context.User.FindAll("permissions").Any(claim =>
+                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:ingest", StringComparer.Ordinal)) ||
+            context.User.FindAll("scope").Any(claim =>
+                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:ingest", StringComparer.Ordinal)))));
 }
+// Delegated extraction requires an authenticated fleet; refuse to expose an unauthenticated ingest
+// path in a real deployment. Development may run it open for local end-to-end testing.
+if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && !authEnabled && !builder.Environment.IsDevelopment())
+    throw new InvalidOperationException("Resolver:ExtractionMode=Delegated requires Auth0:Domain and Auth0:Audience outside Development.");
 builder.Services.AddOpenTelemetry().ConfigureResource(r => r.AddService("harmony-resolver-api"))
     .WithTracing(t =>
     {
@@ -141,7 +174,7 @@ var forwardedHeaders = new ForwardedHeadersOptions
 forwardedHeaders.KnownIPNetworks.Clear();
 forwardedHeaders.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeaders);
-if (!string.IsNullOrWhiteSpace(authDomain) && !string.IsNullOrWhiteSpace(audience)) app.UseAuthentication();
+if (authEnabled) app.UseAuthentication();
 app.Use(async (context, next) =>
 {
     if (context.Request.Headers.Authorization.Count > 0)
@@ -161,6 +194,7 @@ app.Use(async (context, next) =>
     }
     await next(context);
 });
+if (authEnabled) app.UseAuthorization();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -184,6 +218,8 @@ app.MapPrometheusScrapingEndpoint("/metrics");
 if (!string.IsNullOrWhiteSpace(postgresConnection) && storage is not null && !string.IsNullOrWhiteSpace(storage.Endpoint))
 {
     app.MapDistributedResolverEndpoints();
+    if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated)
+        app.MapWorkerIngestionEndpoints(authEnabled);
 }
 else
 {
