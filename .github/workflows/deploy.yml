@@ -20,4 +20,14 @@ jobs:
             set -euo pipefail
             cd /opt/harmony-resolver
             git pull --ff-only
-            sudo systemctl restart harmony-resolver.service
+            if ! sudo systemctl restart harmony-resolver.service; then
+              echo '=== harmony-resolver service status ==='
+              sudo systemctl status harmony-resolver.service --no-pager --full || true
+              echo '=== harmony-resolver service journal (last 200 lines) ==='
+              sudo journalctl -u harmony-resolver.service --no-pager --lines 200 || true
+              echo '=== RabbitMQ container status ==='
+              sudo docker ps -a --filter 'name=rabbitmq' --format '{{.Names}} {{.Status}}' || true
+              echo '=== RabbitMQ container log (last 200 lines) ==='
+              sudo docker logs --tail 200 harmony-resolver-rabbitmq-1 || true
+              exit 1
+            fi
