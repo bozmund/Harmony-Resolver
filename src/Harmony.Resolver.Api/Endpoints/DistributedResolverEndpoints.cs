@@ -93,6 +93,7 @@ public static class DistributedResolverEndpoints
         IJobNotifier jobNotifier,
         ILogger<Program> logger)
     {
+        var stopwatch = Stopwatch.StartNew();
         if (!VideoIds.IsValid(videoId))
         {
             await InvalidVideoId().ExecuteAsync(context);
@@ -100,15 +101,27 @@ public static class DistributedResolverEndpoints
         }
 
         var identity = identities.Resolve(context);
-        var stopwatch = Stopwatch.StartNew();
 
         var track = await tracks.GetAsync(videoId, context.RequestAborted);
         if (track is { Status: TrackStatus.Ready, ObjectKey: not null, ContentLength: not null, ETag: not null })
         {
             await using var readyPermit = await quotas.TryAcquireResponseAsync(identity, context.RequestAborted);
             if (readyPermit is null) { await ResponseLimited(context); return; }
-            await ServeReadyAsync(context, tracks, objects, track, options, clock);
-            await RecordServedAsync(metrics, playHistory, logger, videoId, "hit", stopwatch.ElapsedMilliseconds, identity.Key);
+            var fullTransferDurationMs = await ServeReadyAsync(
+                context,
+                tracks,
+                objects,
+                track,
+                metrics,
+                stopwatch);
+            await RecordServedAsync(
+                metrics,
+                playHistory,
+                logger,
+                videoId,
+                "hit",
+                fullTransferDurationMs,
+                identity.Key);
             return;
         }
 
@@ -195,6 +208,12 @@ public static class DistributedResolverEndpoints
             context.Response.ContentType = "audio/ogg";
             context.Response.Headers.ETag = etag;
             var responseConnected = true;
+            var responseBody = metrics.TrackFirstResponseWrite(
+                context.Response.Body,
+                stopwatch,
+                AudioCacheStatus.Miss,
+                AudioRangeKind.Initial);
+            long? fullTransferDurationMs = null;
             Exception? teeFailure = null;
             try
             {
@@ -204,11 +223,13 @@ public static class DistributedResolverEndpoints
                     await pipe.Writer.WriteAsync(chunk, CancellationToken.None);
                     if (responseConnected)
                     {
-                        try { await context.Response.Body.WriteAsync(chunk, context.RequestAborted); }
+                        try { await responseBody.WriteAsync(chunk, context.RequestAborted); }
                         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { responseConnected = false; }
                         catch (IOException) { responseConnected = false; }
                     }
                 }
+                if (responseConnected)
+                    fullTransferDurationMs = stopwatch.ElapsedMilliseconds;
             }
             catch (Exception exception)
             {
@@ -228,7 +249,17 @@ public static class DistributedResolverEndpoints
                 throw new InvalidOperationException("lease_lost");
             }
 
-            await RecordServedAsync(metrics, playHistory, logger, videoId, "miss", stopwatch.ElapsedMilliseconds, identity.Key);
+            if (fullTransferDurationMs is { } durationMs)
+            {
+                await RecordServedAsync(
+                    metrics,
+                    playHistory,
+                    logger,
+                    videoId,
+                    "miss",
+                    durationMs,
+                    identity.Key);
+            }
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
@@ -268,9 +299,9 @@ public static class DistributedResolverEndpoints
         }
     }
 
-    private static async Task ServeReadyAsync(
+    private static async Task<long> ServeReadyAsync(
         HttpContext context, ITrackRepository tracks, IObjectStore objects, StoredTrack track,
-        ResolverOptions options, TimeProvider clock)
+        ResolverMetrics metrics, Stopwatch requestStopwatch)
     {
         var length = track.ContentLength!.Value;
         var (offset, count, partial) = ParseRange(context.Request.Headers.Range, length);
@@ -280,8 +311,15 @@ public static class DistributedResolverEndpoints
         context.Response.Headers.AcceptRanges = "bytes";
         context.Response.Headers.ETag = track.ETag;
         if (partial) context.Response.Headers.ContentRange = $"bytes {offset}-{offset + count - 1}/{length}";
-        await objects.CopyToAsync(track.ObjectKey!, context.Response.Body, offset, count, context.RequestAborted);
+        var responseBody = metrics.TrackFirstResponseWrite(
+            context.Response.Body,
+            requestStopwatch,
+            AudioCacheStatus.Hit,
+            offset == 0 ? AudioRangeKind.Initial : AudioRangeKind.Nonzero);
+        await objects.CopyToAsync(track.ObjectKey!, responseBody, offset, count, context.RequestAborted);
+        var fullTransferDurationMs = requestStopwatch.ElapsedMilliseconds;
         await tracks.TouchAsync(track.VideoId, CancellationToken.None);
+        return fullTransferDurationMs;
     }
 
     private static (long Offset, long Count, bool Partial) ParseRange(string? value, long length)

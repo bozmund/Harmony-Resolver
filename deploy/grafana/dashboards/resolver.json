@@ -65,7 +65,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Audio serve p95 latency by cache status",
+      "title": "Audio full-transfer p95 latency by cache status",
       "gridPos": { "x": 8, "y": 4, "w": 8, "h": 8 },
       "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(resolver_audio_serve_duration_seconds_bucket[5m])) by (le, cache))", "legendFormat": "{{cache}}" }],
       "options": { "tooltip": { "mode": "multi", "sort": "desc" } },

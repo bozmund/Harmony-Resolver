@@ -85,6 +85,10 @@ if (storage is not null && !string.IsNullOrWhiteSpace(storage.Endpoint))
         .WithEndpoint(endpoint.Host, endpoint.Port)
         .WithCredentials(storage.AccessKey, storage.SecretKey)
         .WithSSL(endpoint.Scheme == Uri.UriSchemeHttps)
+        .WithHttpClient(
+            new HttpClient(
+                new MinioRangeHeadCompatibilityHandler(new HttpClientHandler())),
+            disposeHttpClient: true)
         .Build());
     builder.Services.AddSingleton<IObjectStore, MinioObjectStore>();
     builder.Services.AddHostedService<ObjectStoreInitializer>();

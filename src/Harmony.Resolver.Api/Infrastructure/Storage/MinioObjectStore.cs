@@ -28,10 +28,9 @@ public sealed class MinioObjectStore(IMinioClient client, ObjectStorageOptions o
     public async Task CopyToAsync(
         string objectKey, Stream destination, long offset, long length, CancellationToken cancellationToken)
     {
-        await client.GetObjectAsync(new GetObjectArgs()
-            .WithBucket(options.Bucket)
-            .WithObject(objectKey)
-            .WithCallbackStream((source, token) => CopyRangeAsync(source, destination, offset, length, token)), cancellationToken);
+        await client.GetObjectAsync(
+            CreateRangeRequest(options.Bucket, objectKey, destination, offset, length),
+            cancellationToken);
     }
 
     public async Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
@@ -41,17 +40,31 @@ public sealed class MinioObjectStore(IMinioClient client, ObjectStorageOptions o
             .WithObject(objectKey), cancellationToken);
     }
 
-    private static async Task CopyRangeAsync(
-        Stream source, Stream destination, long offset, long length, CancellationToken cancellationToken)
+    internal static GetObjectArgs CreateRangeRequest(
+        string bucket,
+        string objectKey,
+        Stream destination,
+        long offset,
+        long length)
+    {
+        if (offset < 0) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (length <= 0) throw new ArgumentOutOfRangeException(nameof(length));
+
+        return new GetObjectArgs()
+            .WithBucket(bucket)
+            .WithObject(objectKey)
+            .WithOffsetAndLength(offset, length)
+            .WithCallbackStream((source, token) =>
+                CopyLengthAsync(source, destination, length, token));
+    }
+
+    private static async Task CopyLengthAsync(
+        Stream source,
+        Stream destination,
+        long length,
+        CancellationToken cancellationToken)
     {
         var buffer = new byte[81920];
-        while (offset > 0)
-        {
-            var read = await source.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, offset)), cancellationToken);
-            if (read == 0) throw new EndOfStreamException("Object ended before the requested range.");
-            offset -= read;
-        }
-
         while (length > 0)
         {
             var read = await source.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, length)), cancellationToken);

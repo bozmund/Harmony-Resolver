@@ -1,7 +1,12 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using Harmony.Resolver.Api.Abstractions;
+using Harmony.Resolver.Api.Diagnostics;
 using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Infrastructure.Extraction;
 using Harmony.Resolver.Api.Infrastructure.Persistence;
+using System.Net;
+using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -109,6 +114,81 @@ public sealed class DisconnectContinuationTests : IAsyncLifetime
             "Object store should have the data.");
     }
 
+    [Fact]
+    public async Task Ready_track_serves_exact_initial_and_deep_ranges()
+    {
+        const string videoId = "RangeTst01A";
+        var fakeStore = new FakeObjectStore();
+        _factory = CreateFactory(
+            fakeStore,
+            new SlowDeterministicExtractor(TimeSpan.FromMilliseconds(10)));
+
+        using var client = _factory.CreateClient();
+        await WaitForReadyAsync(client);
+
+        using var initialResponse = await client.GetAsync($"/v1/tracks/{videoId}/audio");
+        Assert.Equal(HttpStatusCode.OK, initialResponse.StatusCode);
+        var expected = await initialResponse.Content.ReadAsByteArrayAsync();
+
+        await AssertRangeAsync(client, videoId, expected, start: 0, end: 15);
+        await AssertRangeAsync(client, videoId, expected, start: 4096, end: 4159);
+
+        Assert.Collection(
+            fakeStore.CopyRequests,
+            request =>
+            {
+                Assert.Equal(0, request.Offset);
+                Assert.Equal(16, request.Length);
+            },
+            request =>
+            {
+                Assert.Equal(4096, request.Offset);
+                Assert.Equal(64, request.Length);
+            });
+    }
+
+    [Fact]
+    public async Task First_byte_metric_records_sanitized_cache_and_range_categories()
+    {
+        const string videoId = "MetricTst1A";
+        var observations = new ConcurrentQueue<MetricObservation>();
+        using var listener = CreateFirstByteListener(observations);
+        var fakeStore = new FakeObjectStore();
+        _factory = CreateFactory(
+            fakeStore,
+            new SlowDeterministicExtractor(TimeSpan.FromMilliseconds(10)));
+
+        using var client = _factory.CreateClient();
+        await WaitForReadyAsync(client);
+
+        using (var miss = await client.GetAsync($"/v1/tracks/{videoId}/audio"))
+        {
+            Assert.Equal(HttpStatusCode.OK, miss.StatusCode);
+            await miss.Content.CopyToAsync(Stream.Null);
+        }
+        using (var initialHit = await client.GetAsync($"/v1/tracks/{videoId}/audio"))
+        {
+            Assert.Equal(HttpStatusCode.OK, initialHit.StatusCode);
+            await initialHit.Content.CopyToAsync(Stream.Null);
+        }
+        using (var deepRange = new HttpRequestMessage(
+                   HttpMethod.Get,
+                   $"/v1/tracks/{videoId}/audio"))
+        {
+            deepRange.Headers.Range = new RangeHeaderValue(4096, 4127);
+            using var nonzeroHit = await client.SendAsync(deepRange);
+            Assert.Equal(HttpStatusCode.PartialContent, nonzeroHit.StatusCode);
+            await nonzeroHit.Content.CopyToAsync(Stream.Null);
+        }
+
+        Assert.Contains(observations, sample =>
+            sample is { Cache: "miss", Range: "initial", TagCount: 2 });
+        Assert.Contains(observations, sample =>
+            sample is { Cache: "hit", Range: "initial", TagCount: 2 });
+        Assert.Contains(observations, sample =>
+            sample is { Cache: "hit", Range: "nonzero", TagCount: 2 });
+    }
+
     private WebApplicationFactory<Program> CreateFactory(IObjectStore store, IMediaExtractor extractor)
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -172,6 +252,64 @@ public sealed class DisconnectContinuationTests : IAsyncLifetime
         }
         return await repo.GetAsync(videoId, CancellationToken.None);
     }
+
+    private static async Task AssertRangeAsync(
+        HttpClient client,
+        string videoId,
+        byte[] expected,
+        int start,
+        int end)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/v1/tracks/{videoId}/audio");
+        request.Headers.Range = new RangeHeaderValue(start, end);
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal(end - start + 1, response.Content.Headers.ContentLength);
+        Assert.Equal(
+            new ContentRangeHeaderValue(start, end, expected.LongLength),
+            response.Content.Headers.ContentRange);
+        Assert.Equal(
+            expected.AsSpan(start, end - start + 1).ToArray(),
+            await response.Content.ReadAsByteArrayAsync());
+    }
+
+    private static MeterListener CreateFirstByteListener(
+        ConcurrentQueue<MetricObservation> observations)
+    {
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, currentListener) =>
+        {
+            if (instrument.Meter.Name == ResolverMetrics.MeterName
+                && instrument.Name == "resolver.audio.first_byte.duration")
+            {
+                currentListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
+        {
+            string? cache = null;
+            string? range = null;
+            var tagCount = 0;
+            foreach (var tag in tags)
+            {
+                tagCount++;
+                if (tag.Key == "cache") cache = tag.Value as string;
+                if (tag.Key == "range") range = tag.Value as string;
+            }
+            observations.Enqueue(new MetricObservation(duration, cache, range, tagCount));
+        });
+        listener.Start();
+        return listener;
+    }
+
+    private sealed record MetricObservation(
+        double DurationSeconds,
+        string? Cache,
+        string? Range,
+        int TagCount);
 }
 
 public sealed class SlowDeterministicExtractor(TimeSpan delay) : IMediaExtractor
@@ -187,6 +325,7 @@ public sealed class SlowDeterministicExtractor(TimeSpan delay) : IMediaExtractor
 public sealed class FakeObjectStore : IObjectStore
 {
     public byte[]? CapturedBytes { get; private set; }
+    public List<(long Offset, long Length)> CopyRequests { get; } = [];
 
     public Task EnsureReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -198,9 +337,16 @@ public sealed class FakeObjectStore : IObjectStore
         CapturedBytes = ms.ToArray();
     }
 
-    public Task CopyToAsync(string objectKey, Stream destination, long offset,
+    public async Task CopyToAsync(string objectKey, Stream destination, long offset,
         long length, CancellationToken cancellationToken)
-        => throw new InvalidOperationException("Copy should not be called on a fresh track.");
+    {
+        var bytes = CapturedBytes
+            ?? throw new InvalidOperationException("Copy should not be called before upload completes.");
+        CopyRequests.Add((offset, length));
+        await destination.WriteAsync(
+            bytes.AsMemory(checked((int)offset), checked((int)length)),
+            cancellationToken);
+    }
 
     public Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
         => Task.CompletedTask;
