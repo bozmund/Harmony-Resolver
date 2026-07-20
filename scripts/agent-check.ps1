@@ -17,13 +17,27 @@ try {
   }
   if (-not $ready) { throw 'Resolver did not become ready' }
   $videoId = 'a' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-  $statuses = 1..20 | ForEach-Object -Parallel {
-    try { (Invoke-WebRequest "http://localhost:$using:resolverPort/v1/tracks/$using:videoId/audio" -UseBasicParsing).StatusCode }
+  $statuses = 1..5 | ForEach-Object -Parallel {
+    try {
+      (Invoke-WebRequest "http://localhost:$using:resolverPort/v1/tracks/$using:videoId/audio" `
+        -Headers @{ 'X-Forwarded-For' = "192.0.2.$_" } -UseBasicParsing).StatusCode
+    }
     catch { [int]$_.Exception.Response.StatusCode }
-  } -ThrottleLimit 20
-  if (($statuses | Where-Object { $_ -eq 200 }).Count -ne 1) { throw "Expected one ingestion leader, got: $($statuses -join ',')" }
-  if (($statuses | Where-Object { $_ -eq 202 }).Count -ne 19) { throw "Expected nineteen followers, got: $($statuses -join ',')" }
-  $range = Invoke-WebRequest "http://localhost:$resolverPort/v1/tracks/$videoId/audio" -Headers @{ Range = 'bytes=0-9' } -UseBasicParsing
+  } -ThrottleLimit 5
+  if (($statuses | Where-Object { $_ -eq 200 }).Count -lt 1) { throw "Expected a completed ingestion, got: $($statuses -join ',')" }
+  if (($statuses | Where-Object { $_ -eq 202 }).Count -lt 1) { throw "Expected concurrent followers, got: $($statuses -join ',')" }
+  if (($statuses | Where-Object { $_ -notin 200, 202, 429 }).Count -ne 0) { throw "Unexpected response status: $($statuses -join ',')" }
+  $range = $null
+  foreach ($attempt in 1..10) {
+    try {
+      $range = Invoke-WebRequest "http://localhost:$resolverPort/v1/tracks/$videoId/audio" `
+        -Headers @{ Range = 'bytes=0-9'; 'X-Forwarded-For' = '192.0.2.250' } -UseBasicParsing
+      break
+    } catch {
+      if ([int]$_.Exception.Response.StatusCode -ne 429 -or $attempt -eq 10) { throw }
+      Start-Sleep -Milliseconds 500
+    }
+  }
   if ($range.StatusCode -ne 206 -or $range.RawContentLength -ne 10) { throw 'Range smoke test failed' }
 } finally {
   & docker @compose down

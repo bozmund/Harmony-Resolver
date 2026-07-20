@@ -13,7 +13,9 @@ public sealed class ResolverOptions
     public int MaxDurationMinutes { get; init; } = 9;
     public int MaxObjectMiB { get; init; } = 50;
     public TimeSpan ExtractionTimeout { get; init; } = TimeSpan.FromMinutes(2);
-    public TimeSpan InactivityExpiry { get; init; } = TimeSpan.FromDays(1);
+    public long MaxMediaGiB { get; init; } = 50;
+    public long PrefetchStopGiB { get; init; } = 45;
+    public long BackupStopGiB { get; init; } = 48;
     public TimeSpan LeaseDuration { get; init; } = TimeSpan.FromMinutes(3);
     public bool UseFakeExtractor { get; init; }
     public ExtractionMode ExtractionMode { get; init; } = ExtractionMode.Inline;

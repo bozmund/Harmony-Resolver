@@ -15,7 +15,8 @@ public sealed class PostgresTrackRepository(
         return entity is null
             ? null
             : new StoredTrack(entity.VideoId, ParseStatus(entity.Status), entity.ObjectKey, entity.ContentLength,
-                entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt);
+                entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt,
+                (IngestionPriority)entity.Priority);
     }
 
     // Stays raw SQL: needs a native atomic INSERT ... ON CONFLICT DO UPDATE ... WHERE upsert, which
@@ -32,8 +33,8 @@ public sealed class PostgresTrackRepository(
 
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO resolver_tracks
-                (video_id, status, last_accessed_at, created_at, updated_at)
-            VALUES ({videoId}, 'ingesting', {now}, {now}, {now})
+                (video_id, status, priority, ingestion_kind, last_accessed_at, created_at, updated_at)
+            VALUES ({videoId}, 'ingesting', {(int)IngestionPriority.Urgent}, 'download', {now}, {now}, {now})
             ON CONFLICT (video_id) DO NOTHING
             """, cancellationToken);
 
@@ -52,7 +53,9 @@ public sealed class PostgresTrackRepository(
         {
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE resolver_tracks
-                SET status = 'ingesting', failure_code = NULL, retry_after = NULL, updated_at = {now}
+                SET status = 'ingesting', priority = {(int)IngestionPriority.Urgent},
+                    ingestion_kind = 'download',
+                    failure_code = NULL, retry_after = NULL, updated_at = {now}
                 WHERE video_id = {videoId}
                 """, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -63,7 +66,8 @@ public sealed class PostgresTrackRepository(
         return null;
     }
 
-    public async Task EnqueueAsync(string videoId, CancellationToken cancellationToken)
+    public async Task EnqueueAsync(
+        string videoId, IngestionPriority priority, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
@@ -72,14 +76,40 @@ public sealed class PostgresTrackRepository(
         // DO UPDATE a no-op, leaving the existing row untouched.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO resolver_tracks
-                (video_id, status, last_accessed_at, created_at, updated_at)
-            VALUES ({videoId}, 'ingesting', {now}, {now}, {now})
+                (video_id, status, priority, ingestion_kind, last_accessed_at, created_at, updated_at)
+            VALUES ({videoId}, 'ingesting', {(int)priority},
+                {((priority == IngestionPriority.Backup) ? "backupVerify" : "download")},
+                {now}, {now}, {now})
             ON CONFLICT (video_id) DO UPDATE
-            SET status = 'ingesting', failure_code = NULL, retry_after = NULL, updated_at = {now}
-            WHERE resolver_tracks.status = 'failed'
-              AND (resolver_tracks.retry_after IS NULL OR resolver_tracks.retry_after <= {now})
+            SET status = CASE
+                    WHEN resolver_tracks.status = 'failed'
+                         AND (resolver_tracks.retry_after IS NULL OR resolver_tracks.retry_after <= {now})
+                    THEN 'ingesting' ELSE resolver_tracks.status END,
+                priority = GREATEST(resolver_tracks.priority, {(int)priority}),
+                ingestion_kind = CASE
+                    WHEN {(int)priority} = {(int)IngestionPriority.Backup}
+                    THEN 'backupVerify' ELSE resolver_tracks.ingestion_kind END,
+                failure_code = CASE
+                    WHEN resolver_tracks.status = 'failed'
+                         AND (resolver_tracks.retry_after IS NULL OR resolver_tracks.retry_after <= {now})
+                    THEN NULL ELSE resolver_tracks.failure_code END,
+                retry_after = CASE
+                    WHEN resolver_tracks.status = 'failed'
+                         AND (resolver_tracks.retry_after IS NULL OR resolver_tracks.retry_after <= {now})
+                    THEN NULL ELSE resolver_tracks.retry_after END,
+                updated_at = CASE
+                    WHEN resolver_tracks.status = 'ingesting'
+                      OR (resolver_tracks.status = 'failed'
+                          AND (resolver_tracks.retry_after IS NULL OR resolver_tracks.retry_after <= {now}))
+                    THEN {now} ELSE resolver_tracks.updated_at END
+            WHERE resolver_tracks.status = 'ingesting'
+               OR (resolver_tracks.status = 'failed'
+                   AND (resolver_tracks.retry_after IS NULL OR resolver_tracks.retry_after <= {now}))
             """, cancellationToken);
     }
+
+    public Task EnqueueAsync(string videoId, CancellationToken cancellationToken) =>
+        EnqueueAsync(videoId, IngestionPriority.Urgent, cancellationToken);
 
     // Raw ADO with a data-modifying CTE: the single statement selects one pending job under
     // FOR UPDATE ... SKIP LOCKED, upserts its lease, and RETURNs the video_id — so two workers can
@@ -107,7 +137,7 @@ public sealed class PostgresTrackRepository(
                     FROM resolver_tracks t
                     LEFT JOIN resolver_ingestion_leases l ON l.video_id = t.video_id
                     WHERE t.status = 'ingesting' AND (l.video_id IS NULL OR l.expires_at <= @now)
-                    ORDER BY t.created_at
+                    ORDER BY t.priority DESC, t.created_at
                     LIMIT 1
                     FOR UPDATE OF t SKIP LOCKED
                 ),
@@ -119,13 +149,17 @@ public sealed class PostgresTrackRepository(
                         WHERE resolver_ingestion_leases.expires_at <= @now
                     RETURNING video_id
                 )
-                SELECT video_id FROM claimed
+                SELECT c.video_id, t.ingestion_kind
+                FROM claimed c
+                JOIN resolver_tracks t ON t.video_id = c.video_id
                 """;
             AddParameter(command, "now", now);
             AddParameter(command, "owner", workerId);
             AddParameter(command, "expires", expiresAt);
-            var result = await command.ExecuteScalarAsync(cancellationToken);
-            return result is string videoId ? new IngestionLease(videoId, workerId, expiresAt) : null;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken)
+                ? new IngestionLease(reader.GetString(0), workerId, expiresAt, reader.GetString(1))
+                : null;
         }
         finally
         {
@@ -196,6 +230,13 @@ public sealed class PostgresTrackRepository(
 
     public Task<bool> MarkReadyAsync(
         IngestionLease lease, string objectKey, long contentLength, string etag,
+        CancellationToken cancellationToken) =>
+        CompleteAsync(lease, "ready", objectKey, contentLength, etag, null, null, null, cancellationToken);
+
+    // Compatibility overload for historical retention tests. Production endpoints use the permanent
+    // overload above and can no longer create an expiring ready object.
+    public Task<bool> MarkReadyAsync(
+        IngestionLease lease, string objectKey, long contentLength, string etag,
         DateTimeOffset expiresAt, CancellationToken cancellationToken) =>
         CompleteAsync(lease, "ready", objectKey, contentLength, etag, null, null, expiresAt, cancellationToken);
 
@@ -203,14 +244,13 @@ public sealed class PostgresTrackRepository(
         IngestionLease lease, string failureCode, DateTimeOffset retryAfter, CancellationToken cancellationToken) =>
         CompleteAsync(lease, "failed", null, null, null, failureCode, retryAfter, null, cancellationToken);
 
-    public async Task TouchAsync(string videoId, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    public async Task TouchAsync(string videoId, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         await db.Tracks.Where(x => x.VideoId == videoId && x.Status == "ready")
             .ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.LastAccessedAt, now)
-                .SetProperty(x => x.ExpiresAt, expiresAt)
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken);
     }
 
@@ -249,6 +289,14 @@ public sealed class PostgresTrackRepository(
             .ToDictionaryAsync(x => x.Key, x => x.Count, cancellationToken);
         var activeLeases = await db.IngestionLeases.AsNoTracking().CountAsync(x => x.ExpiresAt > now, cancellationToken);
         return new RepositoryStatistics(counts, activeLeases);
+    }
+
+    public async Task<long> GetReadyBytesAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        return await db.Tracks.AsNoTracking()
+            .Where(x => x.Status == "ready" && x.ContentLength != null)
+            .SumAsync(x => x.ContentLength ?? 0L, cancellationToken);
     }
 
     private async Task<bool> CompleteAsync(
@@ -293,5 +341,6 @@ public sealed class PostgresTrackRepository(
 
     private static StoredTrack ToStoredTrack(Entities.TrackEntity entity) =>
         new(entity.VideoId, ParseStatus(entity.Status), entity.ObjectKey, entity.ContentLength,
-            entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt);
+            entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt,
+            (IngestionPriority)entity.Priority);
 }

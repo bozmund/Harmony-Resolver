@@ -6,9 +6,18 @@ using Harmony.Resolver.Api.Domain;
 
 namespace Harmony.Resolver.Api.Infrastructure.Persistence;
 
-public sealed class MemoryTrackCatalog(TimeProvider clock, ResolverOptions options) : ITrackCatalog
+public sealed class MemoryTrackCatalog : ITrackCatalog
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
+
+    public MemoryTrackCatalog()
+    {
+    }
+
+    // Kept for source compatibility with older focused tests; retention is now permanent.
+    public MemoryTrackCatalog(TimeProvider _, ResolverOptions __)
+    {
+    }
 
     public TrackInfo Get(string id) =>
         _entries.TryGetValue(id, out var e) ? e.Info : new TrackInfo(id, TrackStatus.Missing);
@@ -20,8 +29,7 @@ public sealed class MemoryTrackCatalog(TimeProvider clock, ResolverOptions optio
         var etag = '"' + Convert.ToHexString(SHA256.HashData(audio)).ToLowerInvariant() + '"';
         _entries[id] =
             new Entry(
-                new TrackInfo(id, TrackStatus.Ready, audio.LongLength, etag,
-                    ExpiresAt: clock.GetUtcNow() + options.InactivityExpiry), audio);
+                new TrackInfo(id, TrackStatus.Ready, audio.LongLength, etag), audio);
     }
 
     public void Failed(string id, string code) =>

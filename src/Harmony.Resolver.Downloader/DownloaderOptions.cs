@@ -37,7 +37,7 @@ public sealed class DownloaderOptions
     {
         return new DownloaderOptions
         {
-            ResolverBaseUrl = Require("RESOLVER_BASE_URL"),
+            ResolverBaseUrl = Require("RESOLVER_BASE_URL").TrimEnd('/') + "/",
             Auth0Domain = Environment.GetEnvironmentVariable("AUTH0_DOMAIN"),
             Auth0ClientId = Environment.GetEnvironmentVariable("AUTH0_CLIENT_ID"),
             Auth0ClientSecret = Environment.GetEnvironmentVariable("AUTH0_CLIENT_SECRET"),

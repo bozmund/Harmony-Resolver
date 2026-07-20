@@ -1,6 +1,6 @@
 # Harmony Resolver
 
-Self-hosted distributed media resolver and Opus cache for Harmony Music.
+Self-hosted distributed media resolver and permanent Opus library for Harmony Music.
 
 ## Development
 
@@ -67,21 +67,17 @@ Database schema changes are EF Core migrations. Compose runs the one-shot `migra
 
 The public endpoints are available through Nginx. `/metrics` and `/internal/*` are blocked publicly. MCP is routed at `/mcp`; outside Development it requires an Auth0 token containing `diagnostics:read`.
 
-### Deploying to a bare VPS
+### Production deployment
 
-`deploy/bootstrap-oracle-vps.sh` sets up the full stack (Docker Engine, firewall rules, a root-owned secrets file, and a `harmony-resolver` systemd unit) on a plain Ubuntu VPS such as an Oracle Cloud Ampere A1 instance, using `compose.prod.yaml` — a production variant of `compose.yaml` that pulls the prebuilt `ghcr.io/bozmund/harmony-resolver-*` images instead of building, and fronts Nginx with Caddy for automatic Let's Encrypt HTTPS (see `deploy/Caddyfile`). Grafana and the PostgreSQL relay are intentionally bound to `127.0.0.1` only; reach them through SSH rather than exposing them publicly:
-
-```powershell
-ssh -N -L 3000:localhost:3000 -L 15432:localhost:15432 <user>@<vps-ip>
-```
-
-In Rider, create a PostgreSQL data source at `localhost:15432` using database `harmony`, user `harmony`, and the production `POSTGRES_PASSWORD`. Do not add Oracle Cloud or host firewall rules for ports `5432` or `15432`.
-
-Run `deploy/setup-ci-deploy-user.sh` once afterward to let `.github/workflows/deploy.yml` redeploy automatically after every successful image publish: it creates a minimally-privileged `deploy` user restricted by sudoers to exactly `systemctl restart harmony-resolver.service`, and prints an SSH keypair to register as the `VPS_HOST`/`VPS_SSH_KEY` repository secrets.
+Production infrastructure is owned by the separate `Harmony-Platform` repository. This repository
+tests and publishes immutable Resolver, Downloader and MCP images, then dispatches the Platform
+deployment workflow. The public Resolver base URL is
+`https://harmony-resolver.duckdns.org/resolver/`. The older bare-VPS scripts remain only as migration
+references and are not the production deployment entry point.
 
 ### Delegated extraction (downloader fleet)
 
-YouTube blocks extraction from datacenter IPs (the bot check yt-dlp reports as "Sign in to confirm you're not a bot"), so a VPS-hosted resolver cannot extract audio itself. With `Resolver__ExtractionMode=Delegated`, the resolver stops contacting YouTube: a cache miss is recorded as a pending ingestion job (`202 ingestion_in_progress`) and the listener polls, while a small fleet of **downloader agents** running on residential IPs claim jobs, fetch the audio with yt-dlp, and upload it back. The resolver normalizes each upload to Ogg Opus server-side and caches it, so the next listener gets a cache hit. The default `Inline` mode (dev/LAN) is unchanged — the API extracts in-process.
+YouTube blocks extraction from datacenter IPs (the bot check yt-dlp reports as "Sign in to confirm you're not a bot"), so a VPS-hosted resolver cannot extract audio itself. With `Resolver__ExtractionMode=Delegated`, the resolver stops contacting YouTube: a library miss is recorded as a pending ingestion job (`202 ingestion_in_progress`) and the listener polls, while a small fleet of **downloader agents** running on residential IPs claim jobs, fetch the audio with yt-dlp, and upload it back. The resolver normalizes each upload to Ogg Opus server-side and stores it permanently, so the next listener gets a library hit. The default `Inline` mode (dev/LAN) is unchanged — the API extracts in-process.
 
 The worker endpoints (`/v1/worker/*`) require an Auth0 machine-to-machine token with the `tracks:ingest` scope, mirroring how MCP requires `diagnostics:read`. Provision one M2M client per agent and revoke a compromised agent by disabling its client. Delegated mode refuses to start outside Development without Auth0 configured, so the ingest path is never exposed unauthenticated.
 

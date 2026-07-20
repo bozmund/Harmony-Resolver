@@ -12,7 +12,7 @@ public interface ITrackRepository
     /// <c>ready</c> or <c>ingesting</c>, and resets a <c>failed</c> row back to <c>ingesting</c> only
     /// once its <c>retry_after</c> backoff has elapsed.
     /// </summary>
-    Task EnqueueAsync(string videoId, CancellationToken cancellationToken);
+    Task EnqueueAsync(string videoId, IngestionPriority priority, CancellationToken cancellationToken);
     /// <summary>
     /// Atomically claims the oldest pending job (using <c>FOR UPDATE ... SKIP LOCKED</c> so concurrent
     /// workers never claim the same track) and leases it to <paramref name="workerId"/>. Returns the
@@ -32,11 +32,12 @@ public interface ITrackRepository
     Task<IReadOnlyList<string>> ListPendingJobsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
     Task<bool> RenewLeaseAsync(IngestionLease lease, TimeSpan duration, CancellationToken cancellationToken);
     Task AbandonLeaseAsync(IngestionLease lease, CancellationToken cancellationToken);
-    Task<bool> MarkReadyAsync(IngestionLease lease, string objectKey, long contentLength, string etag, DateTimeOffset expiresAt, CancellationToken cancellationToken);
+    Task<bool> MarkReadyAsync(IngestionLease lease, string objectKey, long contentLength, string etag, CancellationToken cancellationToken);
     Task<bool> MarkFailedAsync(IngestionLease lease, string failureCode, DateTimeOffset retryAfter, CancellationToken cancellationToken);
-    Task TouchAsync(string videoId, DateTimeOffset expiresAt, CancellationToken cancellationToken);
+    Task TouchAsync(string videoId, CancellationToken cancellationToken);
     Task<IReadOnlyList<StoredTrack>> ListExpiredAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
     Task<bool> DeleteExpiredAsync(string videoId, DateTimeOffset now, CancellationToken cancellationToken);
     Task<IReadOnlyList<StoredTrack>> ListFailuresAsync(DateTimeOffset since, int limit, CancellationToken cancellationToken);
     Task<RepositoryStatistics> GetStatisticsAsync(DateTimeOffset now, CancellationToken cancellationToken);
+    Task<long> GetReadyBytesAsync(CancellationToken cancellationToken);
 }

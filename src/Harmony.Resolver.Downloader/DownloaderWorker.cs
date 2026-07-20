@@ -20,6 +20,7 @@ namespace Harmony.Resolver.Downloader;
 public sealed class DownloaderWorker(
     ResolverWorkerClient client,
     YtDlpDownloader downloader,
+    SourceFingerprintService fingerprints,
     DownloaderOptions options,
     ILogger<DownloaderWorker> logger) : BackgroundService
 {
@@ -185,6 +186,15 @@ public sealed class DownloaderWorker(
         var heartbeat = HeartbeatLoopAsync(job, jobCts);
         try
         {
+            if (job.Kind == "backupVerify")
+            {
+                var fingerprint = await fingerprints.ComputeAsync(
+                    job.VideoId, workingDirectory, jobCts.Token);
+                await client.VerifyBackupAsync(
+                    job.VideoId, job.LeaseToken, fingerprint, stoppingToken);
+                logger.LogInformation("Verified backup {VideoId}.", job.VideoId);
+                return;
+            }
             string filePath;
             try
             {

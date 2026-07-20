@@ -9,6 +9,7 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
     public DbSet<IngestionLeaseEntity> IngestionLeases => Set<IngestionLeaseEntity>();
     public DbSet<DiagnosticAuditEntity> DiagnosticAudits => Set<DiagnosticAuditEntity>();
     public DbSet<PlayEventEntity> PlayEvents => Set<PlayEventEntity>();
+    public DbSet<BackupCandidateEntity> BackupCandidates => Set<BackupCandidateEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,11 +29,13 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         tracks.Property(x => x.RetryAfter).HasColumnName("retry_after");
         tracks.Property(x => x.LastAccessedAt).HasColumnName("last_accessed_at");
         tracks.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+        tracks.Property(x => x.Priority).HasColumnName("priority");
+        tracks.Property(x => x.IngestionKind).HasColumnName("ingestion_kind").HasMaxLength(24);
         tracks.Property(x => x.CreatedAt).HasColumnName("created_at");
         tracks.Property(x => x.UpdatedAt).HasColumnName("updated_at");
-        tracks.HasIndex(x => x.ExpiresAt).HasDatabaseName("ix_resolver_tracks_expiry").HasFilter("status = 'ready'");
         tracks.HasIndex(x => x.UpdatedAt).HasDatabaseName("ix_resolver_tracks_failures").HasFilter("status = 'failed'").IsDescending();
-        tracks.HasIndex(x => x.CreatedAt).HasDatabaseName("ix_resolver_tracks_pending").HasFilter("status = 'ingesting'");
+        tracks.HasIndex(x => new { x.Priority, x.CreatedAt }).HasDatabaseName("ix_resolver_tracks_pending")
+            .HasFilter("status = 'ingesting'").IsDescending(true, false);
 
         var leases = modelBuilder.Entity<IngestionLeaseEntity>();
         leases.ToTable("resolver_ingestion_leases", table => table.HasCheckConstraint("ck_resolver_leases_expiry", "expires_at > acquired_at"));
@@ -63,5 +66,28 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         plays.Property(x => x.DurationMs).HasColumnName("duration_ms");
         plays.Property(x => x.PlayedAt).HasColumnName("played_at");
         plays.HasIndex(x => x.PlayedAt).HasDatabaseName("ix_resolver_play_events_played_at").IsDescending();
+
+        var candidates = modelBuilder.Entity<BackupCandidateEntity>();
+        candidates.ToTable("resolver_backup_candidates", table =>
+        {
+            table.HasCheckConstraint("ck_resolver_backup_candidate_status",
+                "status IN ('pending', 'uploading', 'verifying', 'ready', 'rejected')");
+        });
+        candidates.HasKey(x => x.Id);
+        candidates.Property(x => x.Id).HasColumnName("id");
+        candidates.Property(x => x.VideoId).HasColumnName("video_id").HasMaxLength(11);
+        candidates.Property(x => x.TokenHash).HasColumnName("token_hash");
+        candidates.Property(x => x.Status).HasColumnName("status").HasMaxLength(16);
+        candidates.Property(x => x.StagingObjectKey).HasColumnName("staging_object_key");
+        candidates.Property(x => x.ContentLength).HasColumnName("content_length");
+        candidates.Property(x => x.ETag).HasColumnName("etag");
+        candidates.Property(x => x.DurationSeconds).HasColumnName("duration_seconds");
+        candidates.Property(x => x.FingerprintA).HasColumnName("fingerprint_a");
+        candidates.Property(x => x.FingerprintB).HasColumnName("fingerprint_b");
+        candidates.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+        candidates.Property(x => x.CreatedAt).HasColumnName("created_at");
+        candidates.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        candidates.HasIndex(x => x.VideoId).IsUnique();
+        candidates.HasIndex(x => x.ExpiresAt);
     }
 }

@@ -3,7 +3,7 @@ WORKDIR /src
 COPY . .
 RUN dotnet publish src/Harmony.Resolver.Api/Harmony.Resolver.Api.csproj -c Release -o /out
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip curl ca-certificates unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools python3 python3-pip curl ca-certificates unzip \
     && pip3 install --break-system-packages "yt-dlp[default]" \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && rm -rf /var/lib/apt/lists/*

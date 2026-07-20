@@ -14,6 +14,58 @@ public static class DistributedResolverEndpoints
     {
         endpoints.MapGet("/v1/tracks/{videoId}", GetTrackAsync);
         endpoints.MapGet("/v1/tracks/{videoId}/audio", GetAudioAsync);
+        endpoints.MapPost("/v1/prefetch", PrefetchAsync);
+    }
+
+    private static async Task<IResult> PrefetchAsync(
+        PrefetchRequest request,
+        HttpContext context,
+        ITrackRepository tracks,
+        IQuotaService quotas,
+        RequestIdentityResolver identities,
+        IJobNotifier jobNotifier,
+        ResolverOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (request.VideoIds is null || request.VideoIds.Count is < 1 or > 3
+            || request.VideoIds.Distinct(StringComparer.Ordinal).Count() != request.VideoIds.Count
+            || request.VideoIds.Any(id => !VideoIds.IsValid(id)))
+            return Results.BadRequest(new { code = "invalid_prefetch_request" });
+
+        var identity = identities.Resolve(context);
+        var results = new List<PrefetchResult>(request.VideoIds.Count);
+        var readyBytes = await tracks.GetReadyBytesAsync(cancellationToken);
+        var prefetchLimit = options.PrefetchStopGiB * 1024L * 1024L * 1024L;
+        foreach (var videoId in request.VideoIds)
+        {
+            var current = await tracks.GetAsync(videoId, cancellationToken);
+            if (current?.Status == TrackStatus.Ready)
+            {
+                results.Add(new(videoId, "ready"));
+                continue;
+            }
+            if (current?.Status == TrackStatus.Ingesting)
+            {
+                await tracks.EnqueueAsync(videoId, IngestionPriority.Prefetch, cancellationToken);
+                results.Add(new(videoId, "ingesting"));
+                continue;
+            }
+            if (readyBytes >= prefetchLimit)
+            {
+                results.Add(new(videoId, "blocked_capacity"));
+                continue;
+            }
+            if (!await quotas.TryConsumeIngestionAsync(identity, cancellationToken))
+            {
+                results.Add(new(videoId, "rate_limited"));
+                continue;
+            }
+            await tracks.EnqueueAsync(videoId, IngestionPriority.Prefetch, cancellationToken);
+            if (options.ExtractionMode == ExtractionMode.Delegated)
+                await jobNotifier.NotifyAsync(videoId, cancellationToken);
+            results.Add(new(videoId, "queued"));
+        }
+        return Results.Accepted(value: new PrefetchResponse(results));
     }
 
     private static async Task<IResult> GetTrackAsync(
@@ -70,6 +122,7 @@ public static class DistributedResolverEndpoints
 
         if (track?.Status == TrackStatus.Ingesting)
         {
+            await tracks.EnqueueAsync(videoId, IngestionPriority.Urgent, CancellationToken.None);
             await IngestionInProgress(context).ExecuteAsync(context);
             return;
         }
@@ -79,6 +132,16 @@ public static class DistributedResolverEndpoints
         // a single listener can't flood the job queue.
         if (options.ExtractionMode == ExtractionMode.Delegated)
         {
+            if (await tracks.GetReadyBytesAsync(CancellationToken.None)
+                >= options.MaxMediaGiB * 1024L * 1024L * 1024L)
+            {
+                await Results.Problem(
+                    statusCode: StatusCodes.Status507InsufficientStorage,
+                    title: "Media capacity reached",
+                    extensions: new Dictionary<string, object?> { ["code"] = "media_capacity_reached" })
+                    .ExecuteAsync(context);
+                return;
+            }
             if (!await quotas.TryConsumeIngestionAsync(identity, CancellationToken.None))
             {
                 context.Response.Headers.RetryAfter = "3600";
@@ -86,7 +149,7 @@ public static class DistributedResolverEndpoints
                     extensions: new Dictionary<string, object?> { ["code"] = "ingestion_rate_limited" }).ExecuteAsync(context);
                 return;
             }
-            await tracks.EnqueueAsync(videoId, CancellationToken.None);
+            await tracks.EnqueueAsync(videoId, IngestionPriority.Urgent, CancellationToken.None);
             await jobNotifier.NotifyAsync(videoId, CancellationToken.None);
             await IngestionInProgress(context).ExecuteAsync(context);
             return;
@@ -157,8 +220,8 @@ public static class DistributedResolverEndpoints
                 await pipe.Writer.CompleteAsync(teeFailure);
             }
             await uploadTask;
-            var committed = await tracks.MarkReadyAsync(lease, objectKey, audio.LongLength, etag,
-                clock.GetUtcNow() + options.InactivityExpiry, CancellationToken.None);
+            var committed = await tracks.MarkReadyAsync(
+                lease, objectKey, audio.LongLength, etag, CancellationToken.None);
             if (!committed)
             {
                 await objects.DeleteAsync(objectKey, CancellationToken.None);
@@ -218,7 +281,7 @@ public static class DistributedResolverEndpoints
         context.Response.Headers.ETag = track.ETag;
         if (partial) context.Response.Headers.ContentRange = $"bytes {offset}-{offset + count - 1}/{length}";
         await objects.CopyToAsync(track.ObjectKey!, context.Response.Body, offset, count, context.RequestAborted);
-        await tracks.TouchAsync(track.VideoId, clock.GetUtcNow() + options.InactivityExpiry, CancellationToken.None);
+        await tracks.TouchAsync(track.VideoId, CancellationToken.None);
     }
 
     private static (long Offset, long Count, bool Partial) ParseRange(string? value, long length)
@@ -269,3 +332,7 @@ public static class DistributedResolverEndpoints
             extensions: new Dictionary<string, object?> { ["code"] = "response_concurrency_limited" }).ExecuteAsync(context);
     }
 }
+
+public sealed record PrefetchRequest(IReadOnlyList<string> VideoIds);
+public sealed record PrefetchResult(string VideoId, string Status);
+public sealed record PrefetchResponse(IReadOnlyList<PrefetchResult> Tracks);

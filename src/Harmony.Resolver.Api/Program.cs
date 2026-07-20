@@ -44,6 +44,7 @@ if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated)
     // downloader fleet, which uploads raw audio for the server to normalize. FfmpegNormalizer is
     // still needed server-side to canonicalize those uploads to Ogg Opus.
     builder.Services.AddSingleton<FfmpegNormalizer>();
+    builder.Services.AddSingleton<AudioFingerprintService>();
     builder.Services.AddSingleton<IMediaExtractor, DelegatedExtractionPlaceholder>();
 }
 else if (resolverConfiguration.UseFakeExtractor)
@@ -53,6 +54,7 @@ else if (resolverConfiguration.UseFakeExtractor)
 else
 {
     builder.Services.AddSingleton<FfmpegNormalizer>();
+    builder.Services.AddSingleton<AudioFingerprintService>();
     builder.Services.AddSingleton<YoutubeExplode.YoutubeClient>();
     builder.Services.AddSingleton<IExtractorAdapter, YtDlpExtractorAdapter>();
     builder.Services.AddSingleton<IExtractorAdapter, YoutubeExplodeExtractorAdapter>();
@@ -86,7 +88,6 @@ if (storage is not null && !string.IsNullOrWhiteSpace(storage.Endpoint))
         .Build());
     builder.Services.AddSingleton<IObjectStore, MinioObjectStore>();
     builder.Services.AddHostedService<ObjectStoreInitializer>();
-    if (!string.IsNullOrWhiteSpace(postgresConnection)) builder.Services.AddHostedService<ExpiredObjectJanitor>();
 }
 if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && !string.IsNullOrWhiteSpace(postgresConnection))
     builder.Services.AddHostedService<StuckJobReaper>();
@@ -135,6 +136,12 @@ if (authEnabled)
                 claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:ingest", StringComparer.Ordinal)) ||
             context.User.FindAll("scope").Any(claim =>
                 claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:ingest", StringComparer.Ordinal)))));
+    builder.Services.AddAuthorization(options => options.AddPolicy(BackupUploadEndpoints.BackupPolicy, policy =>
+        policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            context.User.FindAll("permissions").Any(claim =>
+                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:backup", StringComparer.Ordinal)) ||
+            context.User.FindAll("scope").Any(claim =>
+                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:backup", StringComparer.Ordinal)))));
 }
 // Delegated extraction requires an authenticated fleet; refuse to expose an unauthenticated ingest
 // path in a real deployment. Development may run it open for local end-to-end testing.
@@ -219,7 +226,10 @@ if (!string.IsNullOrWhiteSpace(postgresConnection) && storage is not null && !st
 {
     app.MapDistributedResolverEndpoints();
     if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated)
+    {
         app.MapWorkerIngestionEndpoints(authEnabled);
+        app.MapBackupUploadEndpoints(authEnabled);
+    }
 }
 else
 {

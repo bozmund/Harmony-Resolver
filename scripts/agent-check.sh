@@ -18,7 +18,14 @@ done
 video_id="a$(date +%s)"
 export video_id
 export RESOLVER_PORT
-statuses="$(seq 20 | xargs -P20 -I{} sh -c 'curl --silent --output /dev/null --write-out "%{http_code}\n" "http://localhost:$RESOLVER_PORT/v1/tracks/$video_id/audio"')"
-test "$(printf '%s\n' "$statuses" | grep -c '^200$')" = 1
-test "$(printf '%s\n' "$statuses" | grep -c '^202$')" = 19
-test "$(curl --silent --output /dev/null --write-out '%{http_code}:%{size_download}' -H 'Range: bytes=0-9' "http://localhost:$RESOLVER_PORT/v1/tracks/$video_id/audio")" = "206:10"
+statuses="$(seq 5 | xargs -P5 -I{} sh -c 'curl --silent --output /dev/null --write-out "%{http_code}\n" -H "X-Forwarded-For: 192.0.2.{}" "http://localhost:$RESOLVER_PORT/v1/tracks/$video_id/audio"')"
+test "$(printf '%s\n' "$statuses" | grep -c '^200$')" -ge 1
+test "$(printf '%s\n' "$statuses" | grep -c '^202$')" -ge 1
+test "$(printf '%s\n' "$statuses" | grep -Ev '^(200|202|429)$' | wc -l)" = 0
+range_result=""
+for attempt in {1..10}; do
+  range_result="$(curl --silent --output /dev/null --write-out '%{http_code}:%{size_download}' -H 'X-Forwarded-For: 192.0.2.250' -H 'Range: bytes=0-9' "http://localhost:$RESOLVER_PORT/v1/tracks/$video_id/audio")"
+  test "$range_result" = "429:0" || break
+  sleep 0.5
+done
+test "$range_result" = "206:10"

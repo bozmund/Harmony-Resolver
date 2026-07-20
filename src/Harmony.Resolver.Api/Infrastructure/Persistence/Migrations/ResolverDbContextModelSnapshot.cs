@@ -23,6 +23,79 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.BackupCandidateEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long?>("ContentLength")
+                        .HasColumnType("bigint")
+                        .HasColumnName("content_length");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<double?>("DurationSeconds")
+                        .HasColumnType("double precision")
+                        .HasColumnName("duration_seconds");
+
+                    b.Property<string>("ETag")
+                        .HasColumnType("text")
+                        .HasColumnName("etag");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("FingerprintA")
+                        .HasColumnType("text")
+                        .HasColumnName("fingerprint_a");
+
+                    b.Property<string>("FingerprintB")
+                        .HasColumnType("text")
+                        .HasColumnName("fingerprint_b");
+
+                    b.Property<string>("StagingObjectKey")
+                        .HasColumnType("text")
+                        .HasColumnName("staging_object_key");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<byte[]>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("token_hash");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VideoId")
+                        .IsRequired()
+                        .HasMaxLength(11)
+                        .HasColumnType("character varying(11)")
+                        .HasColumnName("video_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("VideoId")
+                        .IsUnique();
+
+                    b.ToTable("resolver_backup_candidates", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_resolver_backup_candidate_status", "status IN ('pending', 'uploading', 'verifying', 'ready', 'rejected')");
+                        });
+                });
+
             modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.DiagnosticAuditEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -160,6 +233,16 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(64)")
                         .HasColumnName("failure_code");
 
+                    b.Property<string>("IngestionKind")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("ingestion_kind");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer")
+                        .HasColumnName("priority");
+
                     b.Property<DateTimeOffset>("LastAccessedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_accessed_at");
@@ -184,16 +267,13 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
 
                     b.HasKey("VideoId");
 
-                    b.HasIndex("ExpiresAt")
-                        .HasDatabaseName("ix_resolver_tracks_expiry")
-                        .HasFilter("status = 'ready'");
-
                     b.HasIndex("UpdatedAt")
                         .IsDescending()
                         .HasDatabaseName("ix_resolver_tracks_failures")
                         .HasFilter("status = 'failed'");
 
-                    b.HasIndex("CreatedAt")
+                    b.HasIndex("Priority", "CreatedAt")
+                        .IsDescending(true, false)
                         .HasDatabaseName("ix_resolver_tracks_pending")
                         .HasFilter("status = 'ingesting'");
 

@@ -13,3 +13,4 @@
 | 2026-07-19 | [Delegated extraction: credentialed downloader fleet](2026-07-19_0138_delegated_extraction_downloader_fleet.md) | Implemented |
 | 2026-07-19 | [RabbitMQ job notifications for the downloader fleet](2026-07-19_1240_rabbitmq_job_notifications.md) | Implemented |
 | 2026-07-19 | [RabbitMQ TLS CA migration](2026-07-19_2045_rabbitmq_tls_ca_migration.md) | In progress |
+| 2026-07-20 | [Harmony durable media, Cloud backup, and prefetch](2026-07-20_0111_harmony_cloud_durable_media.md) | In progress |

@@ -3,6 +3,8 @@ using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Configuration;
 using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Infrastructure.Extraction;
+using Harmony.Resolver.Api.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http.Features;
 
 namespace Harmony.Resolver.Api.Endpoints;
@@ -26,6 +28,7 @@ public static class WorkerIngestionEndpoints
         group.MapPost("/jobs/claim", ClaimAsync);
         group.MapPost("/jobs/{videoId}/heartbeat", HeartbeatAsync);
         group.MapPut("/tracks/{videoId}/audio", UploadAudioAsync);
+        group.MapPost("/tracks/{videoId}/verify-backup", VerifyBackupAsync);
         group.MapPost("/tracks/{videoId}/fail", FailAsync);
     }
 
@@ -34,7 +37,7 @@ public static class WorkerIngestionEndpoints
         var lease = await tracks.ClaimJobAsync(Guid.NewGuid(), options.LeaseDuration, cancellationToken);
         return lease is null
             ? Results.NoContent()
-            : Results.Ok(new WorkerJob(lease.VideoId, lease.OwnerId, lease.ExpiresAt));
+            : Results.Ok(new WorkerJob(lease.VideoId, lease.OwnerId, lease.ExpiresAt, lease.Kind));
     }
 
     private static async Task<IResult> HeartbeatAsync(
@@ -45,12 +48,14 @@ public static class WorkerIngestionEndpoints
         if (!TryLease(context, videoId, out var lease)) return MissingLease();
         var renewed = await tracks.RenewLeaseAsync(lease, options.LeaseDuration, cancellationToken);
         return renewed
-            ? Results.Ok(new WorkerJob(videoId, lease.OwnerId, clock.GetUtcNow() + options.LeaseDuration))
+            ? Results.Ok(new WorkerJob(
+                videoId, lease.OwnerId, clock.GetUtcNow() + options.LeaseDuration, lease.Kind))
             : LeaseLost();
     }
 
     private static async Task<IResult> UploadAudioAsync(
         string videoId, HttpContext context, ITrackRepository tracks, IObjectStore objects,
+        IDbContextFactory<ResolverDbContext> contexts,
         FfmpegNormalizer normalizer, ResolverOptions options, TimeProvider clock,
         ILogger<Program> logger, CancellationToken cancellationToken)
     {
@@ -90,11 +95,24 @@ public static class WorkerIngestionEndpoints
 
             var objectKey = $"tracks/{videoId}.ogg";
             var etag = '"' + Convert.ToHexString(SHA256.HashData(audio)).ToLowerInvariant() + '"';
+            var maxMediaBytes = options.MaxMediaGiB * 1024L * 1024L * 1024L;
+            await using var capacityLock = await MediaCapacityLock.AcquireAsync(
+                contexts, cancellationToken);
+            if (await tracks.GetReadyBytesAsync(cancellationToken) + audio.LongLength > maxMediaBytes)
+            {
+                await tracks.MarkFailedAsync(
+                    lease, "media_capacity_reached",
+                    clock.GetUtcNow() + TimeSpan.FromHours(1), cancellationToken);
+                return Results.Problem(
+                    statusCode: StatusCodes.Status507InsufficientStorage,
+                    title: "Media capacity reached",
+                    extensions: new Dictionary<string, object?> { ["code"] = "media_capacity_reached" });
+            }
             await using (var upload = new MemoryStream(audio, writable: false))
                 await objects.PutAsync(objectKey, upload, audio.LongLength, cancellationToken);
 
-            var committed = await tracks.MarkReadyAsync(lease, objectKey, audio.LongLength, etag,
-                clock.GetUtcNow() + options.InactivityExpiry, cancellationToken);
+            var committed = await tracks.MarkReadyAsync(
+                lease, objectKey, audio.LongLength, etag, cancellationToken);
             if (!committed)
             {
                 await objects.DeleteAsync(objectKey, cancellationToken);
@@ -119,6 +137,75 @@ public static class WorkerIngestionEndpoints
         var code = SanitizeCode(request?.Code);
         var released = await tracks.MarkFailedAsync(lease, code, clock.GetUtcNow() + TimeSpan.FromMinutes(1), cancellationToken);
         return released ? Results.NoContent() : LeaseLost();
+    }
+
+    private static async Task<IResult> VerifyBackupAsync(
+        string videoId,
+        BackupVerificationRequest request,
+        HttpContext context,
+        ITrackRepository tracks,
+        IObjectStore objects,
+        IDbContextFactory<ResolverDbContext> contexts,
+        ResolverOptions options,
+        TimeProvider clock,
+        CancellationToken cancellationToken)
+    {
+        if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
+        if (!TryLease(context, videoId, out var lease)) return MissingLease();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        var candidate = await db.BackupCandidates.SingleOrDefaultAsync(
+            x => x.VideoId == videoId && x.Status == "verifying", cancellationToken);
+        if (candidate is null || candidate.StagingObjectKey is null || candidate.ContentLength is null
+            || candidate.ETag is null || candidate.DurationSeconds is null
+            || candidate.FingerprintA is null || candidate.FingerprintB is null)
+            return Results.NotFound();
+
+        var uploaded = new AudioFingerprint(
+            candidate.DurationSeconds.Value, candidate.FingerprintA, candidate.FingerprintB);
+        var source = new AudioFingerprint(
+            request.DurationSeconds, request.FingerprintA, request.FingerprintB);
+        if (!AudioFingerprintService.Matches(uploaded, source))
+        {
+            await objects.DeleteAsync(candidate.StagingObjectKey, cancellationToken);
+            candidate.Status = "rejected";
+            candidate.UpdatedAt = clock.GetUtcNow();
+            await db.SaveChangesAsync(cancellationToken);
+            await tracks.MarkFailedAsync(
+                lease, "backup_fingerprint_mismatch", clock.GetUtcNow() + TimeSpan.FromHours(1), cancellationToken);
+            return Results.Problem(
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: "Backup audio did not match the source",
+                extensions: new Dictionary<string, object?> { ["code"] = "backup_fingerprint_mismatch" });
+        }
+
+        await using var capacityLock = await MediaCapacityLock.AcquireAsync(
+            contexts, cancellationToken);
+        if (await tracks.GetReadyBytesAsync(cancellationToken) + candidate.ContentLength.Value
+            > options.MaxMediaGiB * 1024L * 1024L * 1024L)
+            return Results.Problem(
+                statusCode: StatusCodes.Status507InsufficientStorage,
+                title: "Media capacity reached",
+                extensions: new Dictionary<string, object?> { ["code"] = "media_capacity_reached" });
+
+        await using var content = new MemoryStream();
+        await objects.CopyToAsync(
+            candidate.StagingObjectKey, content, 0, candidate.ContentLength.Value, cancellationToken);
+        content.Position = 0;
+        var objectKey = $"tracks/{videoId}.ogg";
+        await objects.PutAsync(objectKey, content, candidate.ContentLength.Value, cancellationToken);
+        var committed = await tracks.MarkReadyAsync(
+            lease, objectKey, candidate.ContentLength.Value, candidate.ETag, cancellationToken);
+        if (!committed)
+        {
+            await objects.DeleteAsync(objectKey, cancellationToken);
+            return LeaseLost();
+        }
+
+        await objects.DeleteAsync(candidate.StagingObjectKey, cancellationToken);
+        candidate.Status = "ready";
+        candidate.UpdatedAt = clock.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken);
+        return Results.Ok(new { videoId, status = "ready" });
     }
 
     private static async Task<long> CopyBoundedAsync(Stream source, Stream destination, long maxBytes, CancellationToken cancellationToken)
@@ -176,6 +263,8 @@ public static class WorkerIngestionEndpoints
         extensions: new Dictionary<string, object?> { ["code"] = "empty_upload" });
 }
 
-public sealed record WorkerJob(string VideoId, Guid LeaseToken, DateTimeOffset ExpiresAt);
+public sealed record WorkerJob(string VideoId, Guid LeaseToken, DateTimeOffset ExpiresAt, string Kind);
 public sealed record WorkerUploadResult(string VideoId, long ContentLength, string ETag);
 public sealed record WorkerFailRequest(string? Code);
+public sealed record BackupVerificationRequest(
+    double DurationSeconds, string FingerprintA, string FingerprintB);

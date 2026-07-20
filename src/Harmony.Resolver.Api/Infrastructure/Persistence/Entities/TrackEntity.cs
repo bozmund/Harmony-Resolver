@@ -11,6 +11,8 @@ public sealed class TrackEntity
     public DateTimeOffset? RetryAfter { get; set; }
     public DateTimeOffset LastAccessedAt { get; set; }
     public DateTimeOffset? ExpiresAt { get; set; }
+    public int Priority { get; set; } = (int)Domain.IngestionPriority.Urgent;
+    public string IngestionKind { get; set; } = "download";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public IngestionLeaseEntity? Lease { get; set; }

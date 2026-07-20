@@ -8,4 +8,5 @@ public sealed record StoredTrack(
     string? ETag,
     string? FailureCode,
     DateTimeOffset? RetryAfter,
-    DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt,
+    IngestionPriority Priority = IngestionPriority.Urgent);

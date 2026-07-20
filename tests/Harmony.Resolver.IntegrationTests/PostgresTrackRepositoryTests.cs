@@ -135,6 +135,34 @@ public sealed class PostgresTrackRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ClaimJob_prioritizes_urgent_playback_over_older_prefetch()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        await repository.EnqueueAsync("prefetch001", IngestionPriority.Prefetch, CancellationToken.None);
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await repository.EnqueueAsync("urgent00001", IngestionPriority.Urgent, CancellationToken.None);
+
+        var lease = await repository.ClaimJobAsync(
+            Guid.NewGuid(), TimeSpan.FromMinutes(3), CancellationToken.None);
+
+        Assert.Equal("urgent00001", lease!.VideoId);
+    }
+
+    [Fact]
+    public async Task Permanent_ready_overload_does_not_set_an_expiry()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        var lease = await repository.TryAcquireLeaseAsync(
+            "permanent01", Guid.NewGuid(), TimeSpan.FromMinutes(3), CancellationToken.None);
+
+        Assert.True(await repository.MarkReadyAsync(
+            lease!, "tracks/permanent01.ogg", 321, "\"etag\"", CancellationToken.None));
+
+        var track = await repository.GetAsync("permanent01", CancellationToken.None);
+        Assert.Null(track!.ExpiresAt);
+    }
+
+    [Fact]
     public async Task One_pending_job_is_claimed_by_exactly_one_of_many_workers()
     {
         var repository = new PostgresTrackRepository(_contexts, _clock);

@@ -16,6 +16,7 @@ builder.Services.AddSingleton(sp => new ResolverWorkerClient(
     new HttpClient { BaseAddress = new Uri(options.ResolverBaseUrl), Timeout = TimeSpan.FromMinutes(10) },
     sp.GetRequiredService<Auth0TokenProvider>()));
 builder.Services.AddSingleton<YtDlpDownloader>();
+builder.Services.AddSingleton<SourceFingerprintService>();
 builder.Services.AddHostedService<DownloaderWorker>();
 
 await builder.Build().RunAsync();
