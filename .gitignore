@@ -10,3 +10,4 @@ data/
 *.user
 *.suo
 compose.*.local.yml
+.codex-remote-attachments/

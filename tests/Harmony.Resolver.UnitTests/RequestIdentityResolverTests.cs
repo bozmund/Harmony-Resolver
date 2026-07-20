@@ -2,6 +2,7 @@ using Harmony.Resolver.Api.Configuration;
 using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Infrastructure.Security;
 using Microsoft.AspNetCore.Http;
+using System.Security.Claims;
 using Xunit;
 
 namespace Harmony.Resolver.UnitTests;
@@ -27,6 +28,23 @@ public sealed class RequestIdentityResolverTests
         // The same subject should always produce the same key
         var identity2 = _resolver.Resolve(http);
         Assert.Equal(identity.Key, identity2.Key);
+    }
+
+    [Fact]
+    public void Authenticated_mapped_subject_uses_authenticated_tier()
+    {
+        var http = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(
+                new ClaimsIdentity(
+                    [new Claim(ClaimTypes.NameIdentifier, "auth0|mapped-user")],
+                    "Bearer"))
+        };
+
+        var identity = _resolver.Resolve(http);
+
+        Assert.True(identity.IsAuthenticated);
+        Assert.NotEmpty(identity.Key);
     }
 
     [Fact]

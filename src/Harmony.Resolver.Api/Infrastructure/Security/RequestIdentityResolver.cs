@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Claims;
 using System.Text;
 using Harmony.Resolver.Api.Configuration;
 using Harmony.Resolver.Api.Domain;
@@ -11,6 +12,7 @@ public sealed class RequestIdentityResolver(QuotaOptions options)
     {
         var subject = context.User.Identity?.IsAuthenticated == true
             ? context.User.FindFirst("sub")?.Value
+                ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
             : null;
         var authenticated = !string.IsNullOrWhiteSpace(subject);
         var raw = authenticated

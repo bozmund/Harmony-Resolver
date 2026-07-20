@@ -126,6 +126,7 @@ if (authEnabled)
     {
         o.Authority = $"https://{authDomain!.TrimEnd('/')}/";
         o.Audience = audience;
+        o.MapInboundClaims = false;
         o.TokenValidationParameters = new TokenValidationParameters { ValidateIssuer = true, ValidateAudience = true, ValidateLifetime = true, ValidateIssuerSigningKey = true };
     });
     // Downloader fleet authorization. Mirrors the MCP service's diagnostics:read policy: a valid
