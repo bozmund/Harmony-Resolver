@@ -4,11 +4,61 @@ using Microsoft.Extensions.Logging;
 
 namespace Harmony.Resolver.Downloader;
 
-/// <summary>Thrown when yt-dlp cannot produce a usable audio file. <see cref="Code"/> is reported to the resolver.</summary>
-public sealed class DownloadException(string code, string detail) : Exception($"{code}: {detail}")
+/// <summary>
+/// A safe, structured downloader failure. Only <see cref="Code"/> is sent to Resolver; the
+/// remaining fields are suitable for local structured logs and deliberately exclude stream URLs,
+/// credentials and request query strings.
+/// </summary>
+public sealed class DownloadException : Exception
 {
-    public string Code { get; } = code;
-    public string Detail { get; } = detail;
+    public DownloadException(string code, string detail, string? stage = null, string? tool = null, int? exitCode = null)
+        : base($"{code}: {DownloadFailure.SanitizeDetail(detail)}")
+    {
+        Code = code;
+        Detail = DownloadFailure.SanitizeDetail(detail);
+        Stage = stage;
+        Tool = tool;
+        ExitCode = exitCode;
+    }
+
+    public string Code { get; }
+    public string Detail { get; }
+    public string? Stage { get; }
+    public string? Tool { get; }
+    public int? ExitCode { get; }
+}
+
+internal static partial class DownloadFailure
+{
+    [GeneratedRegex("https?://[^\\s\\]\\)\\\"']+", RegexOptions.IgnoreCase)]
+    private static partial Regex UrlPattern();
+
+    internal static string SanitizeDetail(string value)
+    {
+        var sanitized = UrlPattern().Replace(value, "[redacted-url]");
+        sanitized = sanitized.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return sanitized.Length <= 500 ? sanitized : sanitized[..500];
+    }
+
+    internal static string ProcessFailureCode(string stage, string tool, string stderr)
+    {
+        var toolName = Path.GetFileNameWithoutExtension(tool).ToLowerInvariant();
+        var error = stderr.ToLowerInvariant();
+        if (toolName == "ffmpeg")
+        {
+            if (error.Contains("403") || error.Contains("forbidden") || error.Contains("access denied"))
+                return "source_fingerprint_ffmpeg_access_denied";
+            if (error.Contains("401") || error.Contains("unauthorized"))
+                return "source_fingerprint_ffmpeg_unauthorized";
+            if (error.Contains("timed out") || error.Contains("connection refused") || error.Contains("network is unreachable"))
+                return "source_fingerprint_ffmpeg_network_failed";
+            return "source_fingerprint_ffmpeg_failed";
+        }
+
+        if (toolName == "fpcalc") return "source_fingerprint_fpcalc_failed";
+        if (toolName is "yt-dlp" or "yt_dlp") return "source_inspection_yt_dlp_failed";
+        return "source_fingerprint_process_failed";
+    }
 }
 
 /// <summary>
@@ -58,7 +108,7 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
         var output = (await outputTask).Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.Trim();
         var error = await errorTask;
         if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
-            throw new DownloadException("yt_dlp_failed", Sanitize(error));
+            throw new DownloadException("yt_dlp_failed", error, stage: "download", tool: "yt-dlp", exitCode: process.ExitCode);
 
         var path = Path.GetFullPath(output);
         var root = Path.GetFullPath(workingDirectory) + Path.DirectorySeparatorChar;
@@ -85,5 +135,4 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
         catch { /* best effort */ }
     }
 
-    private static string Sanitize(string value) => value.Length <= 500 ? value : value[..500];
 }

@@ -79,16 +79,28 @@
       "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
     },
     {
+      "type": "timeseries",
+      "title": "Audio first-byte latency by cache and range",
+      "description": "Time from the Resolver request start until the first response byte is written. Use this to assess playback startup; full-transfer latency is shown separately.",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(resolver_audio_first_byte_duration_seconds_bucket[5m])) by (le, cache, range))", "legendFormat": "p50 {{cache}} / {{range}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(resolver_audio_first_byte_duration_seconds_bucket[5m])) by (le, cache, range))", "legendFormat": "p95 {{cache}} / {{range}}" }
+      ],
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
       "type": "table",
       "title": "Recent plays",
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 9 },
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 9 },
       "datasource": { "type": "postgres", "uid": "Postgres" },
       "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT played_at, video_id, cache, duration_ms, identity_hash FROM resolver_play_events ORDER BY played_at DESC LIMIT 20" }]
     },
     {
       "type": "table",
       "title": "Cached tracks (most recently played first)",
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 9 },
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 9 },
       "datasource": { "type": "postgres", "uid": "Postgres" },
       "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT video_id, content_length AS size_bytes, last_accessed_at, expires_at FROM resolver_tracks WHERE status = 'ready' ORDER BY last_accessed_at DESC LIMIT 50" }],
       "fieldConfig": {
@@ -99,49 +111,49 @@
     {
       "type": "timeseries",
       "title": "Extraction failure rate by code",
-      "gridPos": { "x": 0, "y": 21, "w": 8, "h": 9 },
+      "gridPos": { "x": 0, "y": 29, "w": 8, "h": 9 },
       "targets": [{ "refId": "A", "expr": "sum(rate(resolver_extraction_failures_total[5m])) by (failure_code)", "legendFormat": "{{failure_code}}" }],
       "options": { "tooltip": { "mode": "multi", "sort": "desc" } }
     },
     {
       "type": "table",
       "title": "Failed tracks",
-      "gridPos": { "x": 8, "y": 21, "w": 8, "h": 9 },
+      "gridPos": { "x": 8, "y": 29, "w": 8, "h": 9 },
       "datasource": { "type": "postgres", "uid": "Postgres" },
       "targets": [{ "refId": "A", "format": "table", "rawSql": "SELECT video_id, failure_code, retry_after, updated_at FROM resolver_tracks WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 20" }]
     },
     {
       "type": "logs",
       "title": "Warnings & errors",
-      "gridPos": { "x": 16, "y": 21, "w": 8, "h": 9 },
+      "gridPos": { "x": 16, "y": 29, "w": 8, "h": 9 },
       "datasource": { "type": "loki", "uid": "Loki" },
       "targets": [{ "refId": "A", "expr": "{service_name=~\"api-1|api-2\"} | json | LogLevel =~ \"Warning|Error|Critical\"" }]
     },
     {
       "type": "timeseries",
       "title": "CPU usage",
-      "gridPos": { "x": 0, "y": 30, "w": 8, "h": 8 },
+      "gridPos": { "x": 0, "y": 38, "w": 8, "h": 8 },
       "targets": [{ "refId": "A", "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "cpu" }],
       "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
     },
     {
       "type": "timeseries",
       "title": "Memory usage",
-      "gridPos": { "x": 8, "y": 30, "w": 8, "h": 8 },
+      "gridPos": { "x": 8, "y": 38, "w": 8, "h": 8 },
       "targets": [{ "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "memory" }],
       "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
     },
     {
       "type": "timeseries",
       "title": "Disk usage",
-      "gridPos": { "x": 16, "y": 30, "w": 8, "h": 8 },
+      "gridPos": { "x": 16, "y": 38, "w": 8, "h": 8 },
       "targets": [{ "refId": "A", "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\"})", "legendFormat": "root disk" }],
       "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] }
     },
     {
       "type": "timeseries",
       "title": "Container memory",
-      "gridPos": { "x": 0, "y": 38, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 46, "w": 12, "h": 8 },
       "targets": [{ "refId": "A", "expr": "container_memory_working_set_bytes{name=~\"harmony-resolver.*\"}", "legendFormat": "{{name}}" }],
       "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
       "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
@@ -149,7 +161,7 @@
     {
       "type": "timeseries",
       "title": "Container CPU",
-      "gridPos": { "x": 12, "y": 38, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 46, "w": 12, "h": 8 },
       "targets": [{ "refId": "A", "expr": "rate(container_cpu_usage_seconds_total{name=~\"harmony-resolver.*\"}[5m]) * 100", "legendFormat": "{{name}}" }],
       "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
       "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
@@ -158,7 +170,7 @@
       "type": "row",
       "title": "Infra / all traffic",
       "collapsed": true,
-      "gridPos": { "x": 0, "y": 46, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 54, "w": 24, "h": 1 },
       "panels": [
         {
           "type": "timeseries",

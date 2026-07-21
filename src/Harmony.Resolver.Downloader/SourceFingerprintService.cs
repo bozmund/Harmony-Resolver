@@ -35,14 +35,14 @@ public sealed class SourceFingerprintService(DownloaderOptions options)
             "--match-filter", $"duration <= {options.MaxDurationMinutes * 60}",
             "-f", "worstaudio/worst", "--print", "duration", "--print", "urls",
             $"https://www.youtube.com/watch?v={videoId}");
-        var output = await RunAsync(info, cancellationToken);
+        var output = await RunAsync(info, cancellationToken, "source_inspection");
         var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (lines.Length < 2
             || !double.TryParse(lines[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var duration)
             || duration <= 0
             || !Uri.TryCreate(lines[^1], UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https"))
-            throw new DownloadException("source_inspection_failed", "yt-dlp returned invalid source metadata");
+            throw new DownloadException("source_inspection_invalid_metadata", "yt-dlp returned invalid source metadata", stage: "source_inspection", tool: "yt-dlp");
         return (duration, uri.AbsoluteUri);
     }
 
@@ -59,15 +59,16 @@ public sealed class SourceFingerprintService(DownloaderOptions options)
             "-nostdin", "-hide_banner", "-loglevel", "error",
             "-ss", start.ToString(CultureInfo.InvariantCulture),
             "-t", length.ToString(CultureInfo.InvariantCulture),
-            "-i", streamUrl, "-vn", "-ac", "1", "-ar", "11025", "-y", wave), cancellationToken);
+            "-i", streamUrl, "-vn", "-ac", "1", "-ar", "11025", "-y", wave), cancellationToken,
+            $"source_fingerprint_{suffix}");
         var output = await RunAsync(CreateProcess(
             "fpcalc", "-raw", "-length", Math.Ceiling(length).ToString(CultureInfo.InvariantCulture), wave),
-            cancellationToken);
+            cancellationToken, $"source_fingerprint_{suffix}");
         var fingerprint = output.Split('\n')
             .FirstOrDefault(line => line.StartsWith("FINGERPRINT=", StringComparison.Ordinal))
             ?["FINGERPRINT=".Length..].Trim();
         return string.IsNullOrWhiteSpace(fingerprint)
-            ? throw new DownloadException("fingerprint_failed", "fpcalc returned no fingerprint")
+            ? throw new DownloadException("source_fingerprint_empty", "fpcalc returned no fingerprint", stage: $"source_fingerprint_{suffix}", tool: "fpcalc")
             : fingerprint;
     }
 
@@ -87,18 +88,20 @@ public sealed class SourceFingerprintService(DownloaderOptions options)
 
     private static async Task<string> RunAsync(
         ProcessStartInfo startInfo,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string stage)
     {
         using var process = Process.Start(startInfo)
-            ?? throw new DownloadException("process_start_failed", startInfo.FileName);
+            ?? throw new DownloadException("source_fingerprint_process_start_failed", startInfo.FileName, stage: stage, tool: startInfo.FileName);
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         var output = await stdout;
         var error = await stderr;
         if (process.ExitCode != 0)
-            throw new DownloadException("source_fingerprint_failed",
-                error.Length <= 500 ? error : error[..500]);
+            throw new DownloadException(
+                DownloadFailure.ProcessFailureCode(stage, startInfo.FileName, error), error,
+                stage: stage, tool: startInfo.FileName, exitCode: process.ExitCode);
         return output.Trim();
     }
 }

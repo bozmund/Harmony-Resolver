@@ -195,21 +195,17 @@ public sealed class DownloaderWorker(
                 logger.LogInformation("Verified backup {VideoId}.", job.VideoId);
                 return;
             }
-            string filePath;
-            try
-            {
-                filePath = await downloader.DownloadAsync(job.VideoId, workingDirectory, jobCts.Token);
-            }
-            catch (DownloadException exception)
-            {
-                logger.LogWarning("Download failed for {VideoId}: {Code} ({Detail}).", job.VideoId, exception.Code, exception.Detail);
-                if (!jobCts.IsCancellationRequested)
-                    await client.FailAsync(job.VideoId, job.LeaseToken, exception.Code, stoppingToken);
-                return;
-            }
-
+            var filePath = await downloader.DownloadAsync(job.VideoId, workingDirectory, jobCts.Token);
             await client.UploadAsync(job.VideoId, job.LeaseToken, filePath, stoppingToken);
             logger.LogInformation("Uploaded {VideoId}.", job.VideoId);
+        }
+        catch (DownloadException exception) when (!jobCts.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                "Downloader job failed for {VideoId}: code={FailureCode}, kind={JobKind}, stage={Stage}, tool={Tool}, exitCode={ExitCode}, detail={FailureDetail}.",
+                job.VideoId, exception.Code, job.Kind, exception.Stage, exception.Tool, exception.ExitCode, exception.Detail);
+            try { await client.FailAsync(job.VideoId, job.LeaseToken, exception.Code, stoppingToken); }
+            catch (Exception failException) { logger.LogWarning(failException, "Could not report failure for {VideoId} with {FailureCode}.", job.VideoId, exception.Code); }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
