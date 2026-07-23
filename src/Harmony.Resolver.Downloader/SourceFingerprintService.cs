@@ -66,7 +66,8 @@ public sealed class SourceFingerprintService(DownloaderOptions options)
             cancellationToken, $"source_fingerprint_{suffix}");
         var fingerprint = output.Split('\n')
             .FirstOrDefault(line => line.StartsWith("FINGERPRINT=", StringComparison.Ordinal))
-            ?["FINGERPRINT=".Length..].Trim();
+            ?["FINGERPRINT=".Length..]
+            ?.Trim();
         return string.IsNullOrWhiteSpace(fingerprint)
             ? throw new DownloadException("source_fingerprint_empty", "fpcalc returned no fingerprint", stage: $"source_fingerprint_{suffix}", tool: "fpcalc")
             : fingerprint;

@@ -33,7 +33,7 @@ public sealed class AudioFingerprintService
             && Similarity(uploaded.SegmentB, source.SegmentB) >= 0.85;
     }
 
-    internal static double Similarity(string left, string right)
+    private static double Similarity(string left, string right)
     {
         var leftValues = ParseFingerprint(left);
         var rightValues = ParseFingerprint(right);
@@ -83,7 +83,8 @@ public sealed class AudioFingerprintService
             cancellationToken);
         var fingerprint = output.Split('\n')
             .FirstOrDefault(line => line.StartsWith("FINGERPRINT=", StringComparison.Ordinal))
-            ?["FINGERPRINT=".Length..].Trim();
+            ?["FINGERPRINT=".Length..]
+            ?.Trim();
         return string.IsNullOrWhiteSpace(fingerprint)
             ? throw new ExtractionException("fingerprint_failed", "fpcalc")
             : fingerprint;
