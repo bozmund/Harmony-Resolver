@@ -314,7 +314,7 @@ public sealed class DisconnectContinuationTests : IAsyncLifetime
 
 public sealed class SlowDeterministicExtractor(TimeSpan delay) : IMediaExtractor
 {
-    public async Task<byte[]> ExtractAsync(string videoId, CancellationToken cancellationToken)
+    public async Task<ExtractedAudio> ExtractAsync(string videoId, CancellationToken cancellationToken)
     {
         await Task.Delay(delay, cancellationToken);
         return System.Text.Encoding.UTF8.GetBytes(

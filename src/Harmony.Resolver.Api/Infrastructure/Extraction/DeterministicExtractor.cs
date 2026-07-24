@@ -1,11 +1,13 @@
 using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Diagnostics;
 
+using Harmony.Resolver.Api.Domain;
+
 namespace Harmony.Resolver.Api.Infrastructure.Extraction;
 
 public sealed class DeterministicExtractor(FaultInjectionState? faults = null) : IMediaExtractor
 {
-    public async Task<byte[]> ExtractAsync(string videoId, CancellationToken cancellationToken)
+    public async Task<ExtractedAudio> ExtractAsync(string videoId, CancellationToken cancellationToken)
     {
         if (faults?.Profile == "extractor-timeout") await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         if (faults?.Profile == "malformed-metadata") throw new InvalidDataException("Injected malformed metadata.");

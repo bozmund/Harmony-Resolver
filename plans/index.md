@@ -15,3 +15,4 @@
 | 2026-07-19 | [RabbitMQ TLS CA migration](2026-07-19_2045_rabbitmq_tls_ca_migration.md) | In progress |
 | 2026-07-20 | [Harmony durable media, Cloud backup, and prefetch](2026-07-20_0111_harmony_cloud_durable_media.md) | In progress |
 | 2026-07-20 | [Android playback latency: best-effort 200 ms](2026-07-20_1831_android_playback_latency_200ms.md) | In progress |
+| 2026-07-25 | [Cloud playback sessions: id-only resolution, real queues, live progress](2026-07-25_0014_cloud_playback_id_only_sessions_websocket.md) | In progress |

@@ -54,6 +54,29 @@ public sealed class ResolverWorkerClient(HttpClient http, Auth0TokenProvider tok
         response.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Reports display metadata. Best effort: metadata is a nice-to-have and must never fail a job
+    /// that otherwise produced good audio.
+    /// </summary>
+    public async Task ReportMetadataAsync(
+        string videoId, Guid leaseToken, DownloadedMetadata metadata, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"v1/worker/tracks/{videoId}/metadata")
+        {
+            Content = JsonContent.Create(new
+            {
+                metadata.Title,
+                metadata.Artists,
+                metadata.DurationSeconds,
+                metadata.ThumbnailUrl
+            }, options: Json)
+        };
+        request.Headers.TryAddWithoutValidation(LeaseHeader, leaseToken.ToString());
+        await AuthorizeAsync(request, cancellationToken);
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (response.StatusCode != HttpStatusCode.Conflict) response.EnsureSuccessStatusCode();
+    }
+
     public async Task FailAsync(string videoId, Guid leaseToken, string code, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"v1/worker/tracks/{videoId}/fail")

@@ -195,8 +195,21 @@ public sealed class DownloaderWorker(
                 logger.LogInformation("Verified backup {VideoId}.", job.VideoId);
                 return;
             }
-            var filePath = await downloader.DownloadAsync(job.VideoId, workingDirectory, jobCts.Token);
-            await client.UploadAsync(job.VideoId, job.LeaseToken, filePath, stoppingToken);
+            var media = await downloader.DownloadAsync(job.VideoId, workingDirectory, jobCts.Token);
+            // Must precede the upload: completing an upload deletes the lease this call authenticates
+            // with. Failures here are swallowed so metadata never costs us the audio.
+            if (media.Metadata is { } metadata)
+            {
+                try
+                {
+                    await client.ReportMetadataAsync(job.VideoId, job.LeaseToken, metadata, stoppingToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    logger.LogWarning(exception, "Metadata report failed for {VideoId}.", job.VideoId);
+                }
+            }
+            await client.UploadAsync(job.VideoId, job.LeaseToken, media.Path, stoppingToken);
             logger.LogInformation("Uploaded {VideoId}.", job.VideoId);
         }
         catch (DownloadException exception) when (!jobCts.IsCancellationRequested)

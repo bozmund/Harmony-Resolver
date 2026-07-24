@@ -7,6 +7,7 @@ using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Endpoints;
 using Harmony.Resolver.Api.Infrastructure.Extraction;
 using Harmony.Resolver.Api.Infrastructure.Messaging;
+using Harmony.Resolver.Api.Infrastructure.Metadata;
 using Harmony.Resolver.Api.Infrastructure.Persistence;
 using Harmony.Resolver.Api.Infrastructure.Quotas;
 using Harmony.Resolver.Api.Infrastructure.Security;
@@ -59,6 +60,20 @@ else
     builder.Services.AddSingleton<IExtractorAdapter, YtDlpExtractorAdapter>();
     builder.Services.AddSingleton<IExtractorAdapter, YoutubeExplodeExtractorAdapter>();
     builder.Services.AddSingleton<IMediaExtractor, OrderedMediaExtractor>();
+}
+builder.Services.AddSingleton<MetadataBackfillQueue>();
+// Lazy metadata backfill needs upstream access, which Delegated mode reserves for the downloader
+// fleet. There it stays off by default and coverage instead grows from normal ingestion; set
+// Resolver:MetadataBackfillEnabled explicitly to opt in. It also needs somewhere to persist, so it
+// stays unregistered when Postgres is absent — the queue itself is always present and simply drains
+// to nothing, keeping the endpoints' dependency graph identical in every mode.
+if (resolverConfiguration.MetadataBackfillEnabled
+    && resolverConfiguration.ExtractionMode != ExtractionMode.Delegated
+    && !resolverConfiguration.UseFakeExtractor
+    && !string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("PostgreSql")))
+{
+    builder.Services.AddSingleton<ITrackMetadataSource, YoutubeExplodeMetadataSource>();
+    builder.Services.AddHostedService<MetadataBackfillService>();
 }
 var rabbitConfiguration = builder.Configuration.GetSection("RabbitMq").Get<RabbitMqOptions>() ?? new RabbitMqOptions();
 if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && rabbitConfiguration.Enabled)
@@ -241,6 +256,28 @@ else
     app.MapGet("/v1/tracks/{videoId}", (string videoId, ITrackCatalog catalog) =>
         VideoIds.IsValid(videoId) ? Results.Ok(catalog.Get(videoId)) : Results.BadRequest(Problem("invalid_video_id", "A YouTube video ID must contain exactly 11 safe characters.")));
 
+    // The in-memory catalog stores no metadata, so this always reports a miss and leans on the
+    // backfill queue. Keeps the route present so clients see one contract in every mode.
+    app.MapGet("/v1/tracks/{videoId}/metadata", (string videoId, MetadataBackfillQueue backfill) =>
+    {
+        if (!VideoIds.IsValid(videoId))
+            return Results.BadRequest(Problem("invalid_video_id", "A YouTube video ID must contain exactly 11 safe characters."));
+        backfill.TryEnqueue(videoId);
+        return Results.Ok(TrackMetadataResponse.Missing(videoId));
+    });
+
+    app.MapPost("/v1/tracks/metadata:batch", (TrackMetadataBatchRequest request, MetadataBackfillQueue backfill) =>
+    {
+        if (request.VideoIds is null
+            || request.VideoIds.Count is < 1 or > DistributedResolverEndpoints.MetadataBatchLimit
+            || request.VideoIds.Distinct(StringComparer.Ordinal).Count() != request.VideoIds.Count
+            || request.VideoIds.Any(id => !VideoIds.IsValid(id)))
+            return Results.BadRequest(new { code = "invalid_metadata_request" });
+        foreach (var videoId in request.VideoIds) backfill.TryEnqueue(videoId);
+        return Results.Ok(new TrackMetadataBatchResponse(
+            request.VideoIds.Select(TrackMetadataResponse.Missing).ToList()));
+    });
+
     app.MapGet("/v1/tracks/{videoId}/audio", async (string videoId, HttpContext http, ITrackCatalog catalog, IMediaExtractor extractor, ResolverOptions options) =>
     {
         if (!VideoIds.IsValid(videoId)) return Results.BadRequest(Problem("invalid_video_id", "A YouTube video ID must contain exactly 11 safe characters."));
@@ -261,7 +298,7 @@ else
         using var timeout = new CancellationTokenSource(options.ExtractionTimeout);
         try
         {
-            var audio = await extractor.ExtractAsync(videoId, timeout.Token);
+            var audio = (await extractor.ExtractAsync(videoId, timeout.Token)).Audio;
             if (audio.LongLength > options.MaxObjectMiB * 1024L * 1024L) throw new InvalidDataException("object limit");
             catalog.Ready(videoId, audio);
             return Results.File(audio, "audio/ogg");

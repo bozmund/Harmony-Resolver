@@ -9,7 +9,7 @@ public sealed class DeterministicExtractorTests
     [Fact]
     public async Task Fixture_is_an_ogg_opus_stream()
     {
-        var bytes = await new DeterministicExtractor().ExtractAsync("dQw4w9WgXcQ", CancellationToken.None);
+        var bytes = (await new DeterministicExtractor().ExtractAsync("dQw4w9WgXcQ", CancellationToken.None)).Audio;
 
         Assert.Equal("OggS", Encoding.ASCII.GetString(bytes, 0, 4));
         Assert.Contains("OpusHead", Encoding.ASCII.GetString(bytes));

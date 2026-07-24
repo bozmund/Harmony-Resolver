@@ -285,6 +285,49 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.TrackMetadataEntity", b =>
+                {
+                    b.Property<string>("VideoId")
+                        .HasMaxLength(11)
+                        .HasColumnType("character varying(11)")
+                        .HasColumnName("video_id");
+
+                    b.Property<string>("Album")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("album");
+
+                    b.Property<string>("ArtistsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("artists");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int?>("DurationSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_seconds");
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("thumbnail_url");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("VideoId");
+
+                    b.ToTable("resolver_track_metadata");
+                });
+
             modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.IngestionLeaseEntity", b =>
                 {
                     b.HasOne("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.TrackEntity", "Track")

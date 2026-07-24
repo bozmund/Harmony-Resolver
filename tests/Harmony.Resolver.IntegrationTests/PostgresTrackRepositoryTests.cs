@@ -43,6 +43,67 @@ public sealed class PostgresTrackRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Metadata_round_trips_and_upserts()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        const string id = "M7lc1UVf-VE";
+
+        // No track row exists for this id at all: metadata must not depend on one.
+        await repository.SetMetadataAsync(
+            new TrackMetadata(id, "First Title", ["Artist A"], "Album", 213, "https://example/a.jpg"),
+            CancellationToken.None);
+
+        var stored = await repository.GetMetadataAsync(id, CancellationToken.None);
+        Assert.NotNull(stored);
+        Assert.Equal("First Title", stored.Title);
+        Assert.Equal(["Artist A"], stored.Artists!);
+        Assert.Equal("Album", stored.Album);
+        Assert.Equal(213, stored.DurationSeconds);
+        Assert.Equal("https://example/a.jpg", stored.ThumbnailUrl);
+
+        await repository.SetMetadataAsync(
+            new TrackMetadata(id, "Second Title", ["Artist B", "Artist C"]), CancellationToken.None);
+
+        var updated = await repository.GetMetadataAsync(id, CancellationToken.None);
+        Assert.NotNull(updated);
+        Assert.Equal("Second Title", updated.Title);
+        Assert.Equal(["Artist B", "Artist C"], updated.Artists!);
+        Assert.Null(updated.Album);
+    }
+
+    [Fact]
+    public async Task Metadata_batch_returns_only_known_ids()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        await repository.SetMetadataAsync(new TrackMetadata("9bZkp7q19f0", "Known"), CancellationToken.None);
+
+        var found = await repository.GetMetadataBatchAsync(
+            ["9bZkp7q19f0", "kJQP7kiw5Fk"], CancellationToken.None);
+
+        Assert.Equal("9bZkp7q19f0", Assert.Single(found).VideoId);
+    }
+
+    [Fact]
+    public async Task Metadata_survives_expiry_of_the_cached_audio()
+    {
+        // Evicting an expired audio object must not take the display metadata with it, otherwise a
+        // queue row would lose its title purely because the track fell out of the media cache.
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        const string id = "e-ORhEE9VVg";
+        var lease = await repository.TryAcquireLeaseAsync(id, Guid.NewGuid(), TimeSpan.FromMinutes(2), CancellationToken.None);
+        Assert.NotNull(lease);
+        await repository.SetMetadataAsync(new TrackMetadata(id, "Durable Title"), CancellationToken.None);
+        await repository.MarkReadyAsync(lease, $"tracks/{id}.ogg", 1024, "\"etag\"", CancellationToken.None);
+
+        _clock.Advance(TimeSpan.FromDays(400));
+        await repository.DeleteExpiredAsync(id, _clock.GetUtcNow(), CancellationToken.None);
+
+        var metadata = await repository.GetMetadataAsync(id, CancellationToken.None);
+        Assert.NotNull(metadata);
+        Assert.Equal("Durable Title", metadata.Title);
+    }
+
+    [Fact]
     public async Task Expired_lease_is_recoverable_and_old_owner_cannot_complete()
     {
         var repository = new PostgresTrackRepository(_contexts, _clock);

@@ -1,4 +1,5 @@
 using Harmony.Resolver.Api.Abstractions;
+using Harmony.Resolver.Api.Domain;
 using Harmony.Resolver.Api.Infrastructure.Extraction;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -14,7 +15,7 @@ public sealed class OrderedMediaExtractorTests
         var fallback = new StubAdapter("youtube-explode", [4]);
         var extractor = new OrderedMediaExtractor([primary, fallback], NullLogger<OrderedMediaExtractor>.Instance);
 
-        Assert.Equal([1, 2, 3], await extractor.ExtractAsync("dQw4w9WgXcQ", CancellationToken.None));
+        Assert.Equal([1, 2, 3], (await extractor.ExtractAsync("dQw4w9WgXcQ", CancellationToken.None)).Audio);
         Assert.Equal(1, primary.Calls);
         Assert.Equal(0, fallback.Calls);
     }
@@ -26,7 +27,7 @@ public sealed class OrderedMediaExtractorTests
         var fallback = new StubAdapter("youtube-explode", [4, 5]);
         var extractor = new OrderedMediaExtractor([primary, fallback], NullLogger<OrderedMediaExtractor>.Instance);
 
-        Assert.Equal([4, 5], await extractor.ExtractAsync("dQw4w9WgXcQ", CancellationToken.None));
+        Assert.Equal([4, 5], (await extractor.ExtractAsync("dQw4w9WgXcQ", CancellationToken.None)).Audio);
         Assert.Equal(1, primary.Calls);
         Assert.Equal(1, fallback.Calls);
     }
@@ -39,10 +40,12 @@ public sealed class OrderedMediaExtractorTests
         public StubAdapter(string name, Exception exception) => (Name, _exception) = (name, exception);
         public string Name { get; }
         public int Calls { get; private set; }
-        public Task<byte[]> ExtractAsync(string videoId, CancellationToken cancellationToken)
+        public Task<ExtractedAudio> ExtractAsync(string videoId, CancellationToken cancellationToken)
         {
             Calls++;
-            return _exception is null ? Task.FromResult(_result!) : Task.FromException<byte[]>(_exception);
+            return _exception is null
+                ? Task.FromResult<ExtractedAudio>(_result!)
+                : Task.FromException<ExtractedAudio>(_exception);
         }
     }
 }

@@ -10,6 +10,7 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
     public DbSet<DiagnosticAuditEntity> DiagnosticAudits => Set<DiagnosticAuditEntity>();
     public DbSet<PlayEventEntity> PlayEvents => Set<PlayEventEntity>();
     public DbSet<BackupCandidateEntity> BackupCandidates => Set<BackupCandidateEntity>();
+    public DbSet<TrackMetadataEntity> TrackMetadata => Set<TrackMetadataEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -36,6 +37,18 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         tracks.HasIndex(x => x.UpdatedAt).HasDatabaseName("ix_resolver_tracks_failures").HasFilter("status = 'failed'").IsDescending();
         tracks.HasIndex(x => new { x.Priority, x.CreatedAt }).HasDatabaseName("ix_resolver_tracks_pending")
             .HasFilter("status = 'ingesting'").IsDescending(true, false);
+
+        var metadata = modelBuilder.Entity<TrackMetadataEntity>();
+        metadata.ToTable("resolver_track_metadata");
+        metadata.HasKey(x => x.VideoId);
+        metadata.Property(x => x.VideoId).HasColumnName("video_id").HasMaxLength(11);
+        metadata.Property(x => x.Title).HasColumnName("title").HasMaxLength(300);
+        metadata.Property(x => x.ArtistsJson).HasColumnName("artists").HasColumnType("jsonb");
+        metadata.Property(x => x.Album).HasColumnName("album").HasMaxLength(300);
+        metadata.Property(x => x.DurationSeconds).HasColumnName("duration_seconds");
+        metadata.Property(x => x.ThumbnailUrl).HasColumnName("thumbnail_url").HasMaxLength(500);
+        metadata.Property(x => x.CreatedAt).HasColumnName("created_at");
+        metadata.Property(x => x.UpdatedAt).HasColumnName("updated_at");
 
         var leases = modelBuilder.Entity<IngestionLeaseEntity>();
         leases.ToTable("resolver_ingestion_leases", table => table.HasCheckConstraint("ck_resolver_leases_expiry", "expires_at > acquired_at"));

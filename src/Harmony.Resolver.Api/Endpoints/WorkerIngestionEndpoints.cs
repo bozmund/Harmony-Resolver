@@ -27,9 +27,40 @@ public static class WorkerIngestionEndpoints
 
         group.MapPost("/jobs/claim", ClaimAsync);
         group.MapPost("/jobs/{videoId}/heartbeat", HeartbeatAsync);
+        group.MapPost("/tracks/{videoId}/metadata", ReportMetadataAsync);
         group.MapPut("/tracks/{videoId}/audio", UploadAudioAsync);
         group.MapPost("/tracks/{videoId}/verify-backup", VerifyBackupAsync);
         group.MapPost("/tracks/{videoId}/fail", FailAsync);
+    }
+
+    /// <summary>
+    /// Reports display metadata the worker learned while downloading. Must be called BEFORE the audio
+    /// upload: completing an upload deletes the lease, and this route authenticates against it.
+    /// </summary>
+    private static async Task<IResult> ReportMetadataAsync(
+        string videoId, WorkerMetadataRequest request, HttpContext context, ITrackRepository tracks,
+        CancellationToken cancellationToken)
+    {
+        if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
+        if (!TryLease(context, videoId, out _)) return MissingLease();
+        if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 300)
+            return Results.BadRequest(new { code = "invalid_metadata" });
+
+        await tracks.SetMetadataAsync(new TrackMetadata(
+            videoId,
+            request.Title.Trim(),
+            request.Artists?.Where(x => !string.IsNullOrWhiteSpace(x)).Take(8).ToList(),
+            Truncate(request.Album, 300),
+            request.DurationSeconds is > 0 ? request.DurationSeconds : null,
+            Truncate(request.ThumbnailUrl, 500)), cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static string? Truncate(string? value, int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        return trimmed.Length <= maximumLength ? trimmed : trimmed[..maximumLength];
     }
 
     private static async Task<IResult> ClaimAsync(ITrackRepository tracks, ResolverOptions options, CancellationToken cancellationToken)
@@ -266,5 +297,11 @@ public static class WorkerIngestionEndpoints
 public sealed record WorkerJob(string VideoId, Guid LeaseToken, DateTimeOffset ExpiresAt, string Kind);
 public sealed record WorkerUploadResult(string VideoId, long ContentLength, string ETag);
 public sealed record WorkerFailRequest(string? Code);
+public sealed record WorkerMetadataRequest(
+    string Title,
+    IReadOnlyList<string>? Artists = null,
+    string? Album = null,
+    int? DurationSeconds = null,
+    string? ThumbnailUrl = null);
 public sealed record BackupVerificationRequest(
     double DurationSeconds, string FingerprintA, string FingerprintB);

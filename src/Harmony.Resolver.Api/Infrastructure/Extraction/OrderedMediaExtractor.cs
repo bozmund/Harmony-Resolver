@@ -1,11 +1,13 @@
 using Harmony.Resolver.Api.Abstractions;
 
+using Harmony.Resolver.Api.Domain;
+
 namespace Harmony.Resolver.Api.Infrastructure.Extraction;
 
 public sealed class OrderedMediaExtractor(IEnumerable<IExtractorAdapter> adapters, ILogger<OrderedMediaExtractor> logger)
     : IMediaExtractor
 {
-    public async Task<byte[]> ExtractAsync(string videoId, CancellationToken cancellationToken)
+    public async Task<ExtractedAudio> ExtractAsync(string videoId, CancellationToken cancellationToken)
     {
         ExtractionException? lastFailure = null;
         foreach (var adapter in adapters)

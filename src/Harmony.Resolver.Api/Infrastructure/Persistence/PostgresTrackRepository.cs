@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -297,6 +298,71 @@ public sealed class PostgresTrackRepository(
         return await db.Tracks.AsNoTracking()
             .Where(x => x.Status == "ready" && x.ContentLength != null)
             .SumAsync(x => x.ContentLength ?? 0L, cancellationToken);
+    }
+
+    public async Task<TrackMetadata?> GetMetadataAsync(string videoId, CancellationToken cancellationToken)
+    {
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        var entity = await db.TrackMetadata.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.VideoId == videoId, cancellationToken);
+        if (entity is null) return null;
+        var metadata = ToMetadata(entity);
+        return metadata.IsEmpty ? null : metadata;
+    }
+
+    public async Task<IReadOnlyList<TrackMetadata>> GetMetadataBatchAsync(
+        IReadOnlyCollection<string> videoIds, CancellationToken cancellationToken)
+    {
+        if (videoIds.Count == 0) return [];
+        var ids = videoIds as string[] ?? videoIds.ToArray();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        // Single round trip: Npgsql translates Contains over an array to `video_id = ANY(@ids)`.
+        var entities = await db.TrackMetadata.AsNoTracking()
+            .Where(x => ids.Contains(x.VideoId) && x.Title != null)
+            .ToListAsync(cancellationToken);
+        return entities.Select(ToMetadata).Where(x => !x.IsEmpty).ToList();
+    }
+
+    public async Task SetMetadataAsync(TrackMetadata metadata, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        var artists = metadata.Artists is { Count: > 0 }
+            ? JsonSerializer.Serialize(metadata.Artists)
+            : null;
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        // Upsert rather than update-then-insert: concurrent ingestion and lazy-fill writers for the
+        // same video are expected, and last-writer-wins is fine for display metadata.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO resolver_track_metadata
+                (video_id, title, artists, album, duration_seconds, thumbnail_url, created_at, updated_at)
+            VALUES ({metadata.VideoId}, {metadata.Title}, {artists}::jsonb, {metadata.Album},
+                    {metadata.DurationSeconds}, {metadata.ThumbnailUrl}, {now}, {now})
+            ON CONFLICT (video_id) DO UPDATE
+            SET title = EXCLUDED.title,
+                artists = EXCLUDED.artists,
+                album = EXCLUDED.album,
+                duration_seconds = EXCLUDED.duration_seconds,
+                thumbnail_url = EXCLUDED.thumbnail_url,
+                updated_at = EXCLUDED.updated_at
+            """, cancellationToken);
+    }
+
+    private static TrackMetadata ToMetadata(Entities.TrackMetadataEntity entity) => new(
+        entity.VideoId, entity.Title, DeserializeArtists(entity.ArtistsJson), entity.Album,
+        entity.DurationSeconds, entity.ThumbnailUrl, entity.UpdatedAt);
+
+    private static IReadOnlyList<string>? DeserializeArtists(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json);
+        }
+        catch (JsonException)
+        {
+            // Never let one malformed row fail a whole batch read.
+            return null;
+        }
     }
 
     private async Task<bool> CompleteAsync(

@@ -1,5 +1,7 @@
 using Harmony.Resolver.Api.Abstractions;
 
+using Harmony.Resolver.Api.Domain;
+
 namespace Harmony.Resolver.Api.Infrastructure.Extraction;
 
 /// <summary>
@@ -9,7 +11,7 @@ namespace Harmony.Resolver.Api.Infrastructure.Extraction;
 /// </summary>
 public sealed class DelegatedExtractionPlaceholder : IMediaExtractor
 {
-    public Task<byte[]> ExtractAsync(string videoId, CancellationToken cancellationToken) =>
+    public Task<ExtractedAudio> ExtractAsync(string videoId, CancellationToken cancellationToken) =>
         throw new InvalidOperationException(
             "Extraction is delegated to the downloader fleet; the server must not extract in Delegated mode.");
 }

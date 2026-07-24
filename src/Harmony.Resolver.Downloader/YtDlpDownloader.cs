@@ -71,7 +71,7 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
     [GeneratedRegex("^[A-Za-z0-9_-]{11}$")]
     private static partial Regex VideoIdPattern();
 
-    public async Task<string> DownloadAsync(string videoId, string workingDirectory, CancellationToken cancellationToken)
+    public async Task<DownloadedMedia> DownloadAsync(string videoId, string workingDirectory, CancellationToken cancellationToken)
     {
         if (!VideoIdPattern().IsMatch(videoId))
             throw new DownloadException("invalid_video_id", "video id is not a valid 11-character YouTube id");
@@ -105,7 +105,10 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
             throw new DownloadException("download_timeout", "yt-dlp exceeded the download timeout");
         }
 
-        var output = (await outputTask).Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.Trim();
+        var lines = (await outputTask).Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        // Self-identifying metadata line, so the file path is found by exclusion rather than by
+        // position — yt-dlp gives no ordering guarantee across --print stages.
+        var output = YtDlpMetadataLine.LastNonMetadataLine(lines);
         var error = await errorTask;
         if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
             throw new DownloadException("yt_dlp_failed", error, stage: "download", tool: "yt-dlp", exitCode: process.ExitCode);
@@ -116,7 +119,7 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
             throw new DownloadException("unsafe_output", "yt-dlp produced an unexpected output path");
 
         logger.LogDebug("yt-dlp produced {Path} for {VideoId}.", path, videoId);
-        return path;
+        return new DownloadedMedia(path, YtDlpMetadataLine.Parse(lines));
     }
 
     internal static string[] BuildArguments(
@@ -125,7 +128,9 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
         "--no-playlist", "--no-progress", "--no-warnings",
         "--match-filter", $"duration <= {maxDurationMinutes * 60}",
         "-f", "bestaudio/best",
-        "-o", outputTemplate, "--print", "after_move:filepath",
+        "-o", outputTemplate,
+        "--print", YtDlpMetadataLine.PrintTemplate,
+        "--print", "after_move:filepath",
         $"https://www.youtube.com/watch?v={videoId}"
     ];
 

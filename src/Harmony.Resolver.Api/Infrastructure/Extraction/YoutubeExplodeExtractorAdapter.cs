@@ -1,5 +1,6 @@
 using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Configuration;
+using Harmony.Resolver.Api.Domain;
 using YoutubeExplode;
 using YoutubeExplode.Videos.Streams;
 
@@ -10,7 +11,7 @@ public sealed class YoutubeExplodeExtractorAdapter(
 {
     public string Name => "youtube-explode";
 
-    public async Task<byte[]> ExtractAsync(string videoId, CancellationToken cancellationToken)
+    public async Task<ExtractedAudio> ExtractAsync(string videoId, CancellationToken cancellationToken)
     {
         var workingDirectory = Directory.CreateTempSubdirectory("harmony-resolver-").FullName;
         try
@@ -25,7 +26,16 @@ public sealed class YoutubeExplodeExtractorAdapter(
                 throw new ExtractionException("object_too_large", Name);
             var inputPath = Path.Combine(workingDirectory, "source." + stream.Container.Name);
             await youtube.Videos.Streams.DownloadAsync(stream, inputPath, cancellationToken: cancellationToken);
-            return await normalizer.NormalizeAsync(inputPath, workingDirectory, cancellationToken);
+            var audio = await normalizer.NormalizeAsync(inputPath, workingDirectory, cancellationToken);
+            // The video document above already carries everything the clients need to render a
+            // queue row, so capturing it here costs nothing extra.
+            return new ExtractedAudio(audio, new TrackMetadata(
+                videoId,
+                video.Title,
+                string.IsNullOrWhiteSpace(video.Author.ChannelTitle) ? null : [video.Author.ChannelTitle],
+                Album: null,
+                DurationSeconds: (int)video.Duration.Value.TotalSeconds,
+                ThumbnailUrl: video.Thumbnails.MaxBy(x => x.Resolution.Area)?.Url));
         }
         catch (ExtractionException)
         {

@@ -20,6 +20,17 @@ public sealed class DownloaderDurationLimitTests
     }
 
     [Fact]
+    public void RequestsMetadataAndFilePathAsSeparatePrintLines()
+    {
+        var arguments = YtDlpDownloader.BuildArguments("jNQXAC9IVRw", "source.%(ext)s", 9);
+
+        Assert.Contains(YtDlpMetadataLine.PrintTemplate, arguments);
+        Assert.Contains("after_move:filepath", arguments);
+        // Two --print flags, each immediately followed by its template.
+        Assert.Equal(2, arguments.Count(x => x == "--print"));
+    }
+
+    [Fact]
     public void FingerprintFailureIsSpecificAndRedactsSignedStreamUrls()
     {
         const string detail = "Error opening input https://media.example/audio?expire=1&signature=secret: Server returned 403 Forbidden";

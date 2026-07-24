@@ -25,4 +25,10 @@ public sealed class ResolverOptions
     /// polling a job no worker can complete eventually get a definitive error instead of polling forever.
     /// </summary>
     public TimeSpan JobMaxAge { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Whether a metadata read that misses may schedule a background fetch from upstream. Ignored in
+    /// <see cref="ExtractionMode.Delegated"/>, where only the downloader fleet contacts YouTube.
+    /// </summary>
+    public bool MetadataBackfillEnabled { get; init; } = true;
 }

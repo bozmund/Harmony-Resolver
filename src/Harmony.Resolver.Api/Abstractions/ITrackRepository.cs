@@ -40,4 +40,21 @@ public interface ITrackRepository
     Task<IReadOnlyList<StoredTrack>> ListFailuresAsync(DateTimeOffset since, int limit, CancellationToken cancellationToken);
     Task<RepositoryStatistics> GetStatisticsAsync(DateTimeOffset now, CancellationToken cancellationToken);
     Task<long> GetReadyBytesAsync(CancellationToken cancellationToken);
+    /// <summary>
+    /// Returns display metadata for <paramref name="videoId"/>, or <see langword="null"/> when the
+    /// track is unknown or its metadata was never captured.
+    /// </summary>
+    Task<TrackMetadata?> GetMetadataAsync(string videoId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Batch form of <see cref="GetMetadataAsync"/> in a single round trip. Ids with no metadata are
+    /// simply absent from the result — callers must not assume index alignment with the input.
+    /// </summary>
+    Task<IReadOnlyList<TrackMetadata>> GetMetadataBatchAsync(
+        IReadOnlyCollection<string> videoIds, CancellationToken cancellationToken);
+    /// <summary>
+    /// Upserts display metadata, creating a placeholder track row if the video has never been seen.
+    /// Deliberately does NOT require holding an ingestion lease: the lease is deleted when ingestion
+    /// completes, and metadata is also written by the lazy-fill path where no lease ever exists.
+    /// </summary>
+    Task SetMetadataAsync(TrackMetadata metadata, CancellationToken cancellationToken);
 }

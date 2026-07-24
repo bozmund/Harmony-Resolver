@@ -4,17 +4,64 @@ using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Configuration;
 using Harmony.Resolver.Api.Diagnostics;
 using Harmony.Resolver.Api.Domain;
+using Harmony.Resolver.Api.Infrastructure.Metadata;
 using Harmony.Resolver.Api.Infrastructure.Security;
 
 namespace Harmony.Resolver.Api.Endpoints;
 
 public static class DistributedResolverEndpoints
 {
+    /// Matches the client's queue-backfill chunk size. Kept well under the 900-song queues the app
+    /// can hold so one render never issues an unbounded query.
+    public const int MetadataBatchLimit = 100;
+
     public static void MapDistributedResolverEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/v1/tracks/{videoId}", GetTrackAsync);
+        endpoints.MapGet("/v1/tracks/{videoId}/metadata", GetTrackMetadataAsync);
+        endpoints.MapPost("/v1/tracks/metadata:batch", GetTrackMetadataBatchAsync);
         endpoints.MapGet("/v1/tracks/{videoId}/audio", GetAudioAsync);
         endpoints.MapPost("/v1/prefetch", PrefetchAsync);
+    }
+
+    /// Cheap metadata read. Like <see cref="GetTrackAsync"/> it takes no quota: it is a single
+    /// primary-key lookup and clients call it on every queue render.
+    private static async Task<IResult> GetTrackMetadataAsync(
+        string videoId, ITrackRepository tracks, MetadataBackfillQueue backfill,
+        CancellationToken cancellationToken)
+    {
+        if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
+        var metadata = await tracks.GetMetadataAsync(videoId, cancellationToken);
+        if (metadata is not null) return Results.Ok(TrackMetadataResponse.Ready(metadata));
+        backfill.TryEnqueue(videoId);
+        return Results.Ok(TrackMetadataResponse.Missing(videoId));
+    }
+
+    private static async Task<IResult> GetTrackMetadataBatchAsync(
+        TrackMetadataBatchRequest request, ITrackRepository tracks, MetadataBackfillQueue backfill,
+        CancellationToken cancellationToken)
+    {
+        if (request.VideoIds is null || request.VideoIds.Count is < 1 or > MetadataBatchLimit
+            || request.VideoIds.Distinct(StringComparer.Ordinal).Count() != request.VideoIds.Count
+            || request.VideoIds.Any(id => !VideoIds.IsValid(id)))
+            return Results.BadRequest(new { code = "invalid_metadata_request" });
+
+        var found = (await tracks.GetMetadataBatchAsync(request.VideoIds, cancellationToken))
+            .ToDictionary(x => x.VideoId, StringComparer.Ordinal);
+        // Preserve request order and always answer for every id, so the client can zip the response
+        // against its queue without a second lookup.
+        var results = new List<TrackMetadataResponse>(request.VideoIds.Count);
+        foreach (var videoId in request.VideoIds)
+        {
+            if (found.TryGetValue(videoId, out var metadata))
+            {
+                results.Add(TrackMetadataResponse.Ready(metadata));
+                continue;
+            }
+            backfill.TryEnqueue(videoId);
+            results.Add(TrackMetadataResponse.Missing(videoId));
+        }
+        return Results.Ok(new TrackMetadataBatchResponse(results));
     }
 
     private static async Task<IResult> PrefetchAsync(
@@ -194,9 +241,14 @@ public static class DistributedResolverEndpoints
         using var timeout = new CancellationTokenSource(options.ExtractionTimeout);
         try
         {
-            var audio = await extractor.ExtractAsync(videoId, timeout.Token);
+            var extracted = await extractor.ExtractAsync(videoId, timeout.Token);
+            var audio = extracted.Audio;
             if (audio.LongLength > options.MaxObjectMiB * 1024L * 1024L)
                 throw new InvalidDataException("object_too_large");
+            // Persist before streaming: the response can be abandoned mid-transfer, and metadata we
+            // already paid for should survive that.
+            if (extracted.Metadata is { IsEmpty: false } metadata)
+                await tracks.SetMetadataAsync(metadata, CancellationToken.None);
 
             var objectKey = $"tracks/{videoId}.ogg";
             var etag = '"' + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(audio)).ToLowerInvariant() + '"';
@@ -369,6 +421,29 @@ public static class DistributedResolverEndpoints
             title: "Response concurrency limit reached",
             extensions: new Dictionary<string, object?> { ["code"] = "response_concurrency_limited" }).ExecuteAsync(context);
     }
+}
+
+public sealed record TrackMetadataBatchRequest(IReadOnlyList<string> VideoIds);
+
+public sealed record TrackMetadataBatchResponse(IReadOnlyList<TrackMetadataResponse> Tracks);
+
+/// <param name="Status"><c>ready</c> when metadata is known, <c>missing</c> when a lazy fill was
+/// scheduled. Mirrors <see cref="TrackInfo"/>'s convention of synthesizing a status rather than
+/// returning 404, so a batch response can answer for every requested id.</param>
+public sealed record TrackMetadataResponse(
+    string VideoId,
+    string Status,
+    string? Title = null,
+    IReadOnlyList<string>? Artists = null,
+    string? Album = null,
+    int? DurationSeconds = null,
+    string? ThumbnailUrl = null)
+{
+    public static TrackMetadataResponse Ready(TrackMetadata metadata) => new(
+        metadata.VideoId, "ready", metadata.Title, metadata.Artists, metadata.Album,
+        metadata.DurationSeconds, metadata.ThumbnailUrl);
+
+    public static TrackMetadataResponse Missing(string videoId) => new(videoId, "missing");
 }
 
 public sealed record PrefetchRequest(IReadOnlyList<string> VideoIds);
