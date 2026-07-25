@@ -31,6 +31,17 @@ public sealed class DownloaderDurationLimitTests
     }
 
     [Fact]
+    public void MetadataBackfillNeverSelectsOrWritesAudio()
+    {
+        var arguments = YtDlpDownloader.BuildMetadataArguments("jNQXAC9IVRw");
+
+        Assert.Contains("--skip-download", arguments);
+        Assert.Contains(YtDlpMetadataLine.PrintTemplate, arguments);
+        Assert.DoesNotContain("-f", arguments);
+        Assert.DoesNotContain("-o", arguments);
+    }
+
+    [Fact]
     public void FingerprintFailureIsSpecificAndRedactsSignedStreamUrls()
     {
         const string detail = "Error opening input https://media.example/audio?expire=1&signature=secret: Server returned 403 Forbidden";

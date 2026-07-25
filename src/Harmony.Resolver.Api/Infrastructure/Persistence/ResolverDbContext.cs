@@ -11,6 +11,8 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
     public DbSet<PlayEventEntity> PlayEvents => Set<PlayEventEntity>();
     public DbSet<BackupCandidateEntity> BackupCandidates => Set<BackupCandidateEntity>();
     public DbSet<TrackMetadataEntity> TrackMetadata => Set<TrackMetadataEntity>();
+    public DbSet<MetadataBackfillJobEntity> MetadataBackfillJobs => Set<MetadataBackfillJobEntity>();
+    public DbSet<MetadataBackfillLeaseEntity> MetadataBackfillLeases => Set<MetadataBackfillLeaseEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -49,6 +51,30 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         metadata.Property(x => x.ThumbnailUrl).HasColumnName("thumbnail_url").HasMaxLength(500);
         metadata.Property(x => x.CreatedAt).HasColumnName("created_at");
         metadata.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+
+        var metadataJobs = modelBuilder.Entity<MetadataBackfillJobEntity>();
+        metadataJobs.ToTable("resolver_metadata_backfill_jobs", table =>
+            table.HasCheckConstraint("ck_resolver_metadata_jobs_status", "status IN ('pending', 'failed')"));
+        metadataJobs.HasKey(x => x.VideoId);
+        metadataJobs.Property(x => x.VideoId).HasColumnName("video_id").HasMaxLength(11);
+        metadataJobs.Property(x => x.Status).HasColumnName("status").HasMaxLength(16);
+        metadataJobs.Property(x => x.RetryAfter).HasColumnName("retry_after");
+        metadataJobs.Property(x => x.CreatedAt).HasColumnName("created_at");
+        metadataJobs.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        metadataJobs.HasIndex(x => new { x.Status, x.CreatedAt }).HasDatabaseName("ix_resolver_metadata_jobs_pending")
+            .HasFilter("status = 'pending'");
+
+        var metadataLeases = modelBuilder.Entity<MetadataBackfillLeaseEntity>();
+        metadataLeases.ToTable("resolver_metadata_backfill_leases", table =>
+            table.HasCheckConstraint("ck_resolver_metadata_leases_expiry", "expires_at > acquired_at"));
+        metadataLeases.HasKey(x => x.VideoId);
+        metadataLeases.Property(x => x.VideoId).HasColumnName("video_id").HasMaxLength(11);
+        metadataLeases.Property(x => x.OwnerId).HasColumnName("owner_id");
+        metadataLeases.Property(x => x.AcquiredAt).HasColumnName("acquired_at");
+        metadataLeases.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+        metadataLeases.HasIndex(x => x.ExpiresAt).HasDatabaseName("ix_resolver_metadata_leases_expiry");
+        metadataLeases.HasOne(x => x.Job).WithOne(x => x.Lease)
+            .HasForeignKey<MetadataBackfillLeaseEntity>(x => x.VideoId).OnDelete(DeleteBehavior.Cascade);
 
         var leases = modelBuilder.Entity<IngestionLeaseEntity>();
         leases.ToTable("resolver_ingestion_leases", table => table.HasCheckConstraint("ck_resolver_leases_expiry", "expires_at > acquired_at"));

@@ -195,6 +195,14 @@ public sealed class DownloaderWorker(
                 logger.LogInformation("Verified backup {VideoId}.", job.VideoId);
                 return;
             }
+            if (job.Kind == "metadata")
+            {
+                var backfillMetadata = await downloader.FetchMetadataAsync(job.VideoId, jobCts.Token);
+                await client.ReportMetadataAsync(job.VideoId, job.LeaseToken, backfillMetadata, stoppingToken);
+                await client.CompleteMetadataAsync(job.VideoId, job.LeaseToken, stoppingToken);
+                logger.LogInformation("Backfilled metadata for {VideoId}.", job.VideoId);
+                return;
+            }
             var media = await downloader.DownloadAsync(job.VideoId, workingDirectory, jobCts.Token);
             // Must precede the upload: completing an upload deletes the lease this call authenticates
             // with. Failures here are swallowed so metadata never costs us the audio.
@@ -217,7 +225,11 @@ public sealed class DownloaderWorker(
             logger.LogWarning(
                 "Downloader job failed for {VideoId}: code={FailureCode}, kind={JobKind}, stage={Stage}, tool={Tool}, exitCode={ExitCode}, detail={FailureDetail}.",
                 job.VideoId, exception.Code, job.Kind, exception.Stage, exception.Tool, exception.ExitCode, exception.Detail);
-            try { await client.FailAsync(job.VideoId, job.LeaseToken, exception.Code, stoppingToken); }
+            try
+            {
+                if (job.Kind == "metadata") await client.FailMetadataAsync(job.VideoId, job.LeaseToken, exception.Code, stoppingToken);
+                else await client.FailAsync(job.VideoId, job.LeaseToken, exception.Code, stoppingToken);
+            }
             catch (Exception failException) { logger.LogWarning(failException, "Could not report failure for {VideoId} with {FailureCode}.", job.VideoId, exception.Code); }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -228,7 +240,11 @@ public sealed class DownloaderWorker(
         {
             logger.LogError(exception, "Processing {VideoId} failed.", job.VideoId);
             if (!jobCts.IsCancellationRequested)
-                try { await client.FailAsync(job.VideoId, job.LeaseToken, "worker_error", CancellationToken.None); }
+                try
+                {
+                    if (job.Kind == "metadata") await client.FailMetadataAsync(job.VideoId, job.LeaseToken, "worker_error", CancellationToken.None);
+                    else await client.FailAsync(job.VideoId, job.LeaseToken, "worker_error", CancellationToken.None);
+                }
                 catch (Exception failException) { logger.LogWarning(failException, "Could not report failure for {VideoId}.", job.VideoId); }
         }
         finally
@@ -249,7 +265,10 @@ public sealed class DownloaderWorker(
             while (!token.IsCancellationRequested)
             {
                 await Task.Delay(interval, token);
-                if (!await client.HeartbeatAsync(job.VideoId, job.LeaseToken, token))
+                var renewed = job.Kind == "metadata"
+                    ? await client.HeartbeatMetadataAsync(job.VideoId, job.LeaseToken, token)
+                    : await client.HeartbeatAsync(job.VideoId, job.LeaseToken, token);
+                if (!renewed)
                 {
                     logger.LogWarning("Lost lease on {VideoId}; abandoning the job.", job.VideoId);
                     await jobCts.CancelAsync();

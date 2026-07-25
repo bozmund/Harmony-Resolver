@@ -28,17 +28,19 @@ public static class DistributedResolverEndpoints
     /// primary-key lookup and clients call it on every queue render.
     private static async Task<IResult> GetTrackMetadataAsync(
         string videoId, ITrackRepository tracks, MetadataBackfillQueue backfill,
+        ResolverOptions options, IJobNotifier notifier,
         CancellationToken cancellationToken)
     {
         if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
         var metadata = await tracks.GetMetadataAsync(videoId, cancellationToken);
         if (metadata is not null) return Results.Ok(TrackMetadataResponse.Ready(metadata));
-        backfill.TryEnqueue(videoId);
+        await EnqueueMetadataBackfillAsync(videoId, tracks, backfill, options, notifier, cancellationToken);
         return Results.Ok(TrackMetadataResponse.Missing(videoId));
     }
 
     private static async Task<IResult> GetTrackMetadataBatchAsync(
         TrackMetadataBatchRequest request, ITrackRepository tracks, MetadataBackfillQueue backfill,
+        ResolverOptions options, IJobNotifier notifier,
         CancellationToken cancellationToken)
     {
         if (request.VideoIds is null || request.VideoIds.Count is < 1 or > MetadataBatchLimit
@@ -58,10 +60,23 @@ public static class DistributedResolverEndpoints
                 results.Add(TrackMetadataResponse.Ready(metadata));
                 continue;
             }
-            backfill.TryEnqueue(videoId);
+            await EnqueueMetadataBackfillAsync(videoId, tracks, backfill, options, notifier, cancellationToken);
             results.Add(TrackMetadataResponse.Missing(videoId));
         }
         return Results.Ok(new TrackMetadataBatchResponse(results));
+    }
+
+    private static async Task EnqueueMetadataBackfillAsync(
+        string videoId, ITrackRepository tracks, MetadataBackfillQueue backfill,
+        ResolverOptions options, IJobNotifier notifier, CancellationToken cancellationToken)
+    {
+        if (options.ExtractionMode != ExtractionMode.Delegated)
+        {
+            backfill.TryEnqueue(videoId);
+            return;
+        }
+        await tracks.EnqueueMetadataBackfillAsync(videoId, cancellationToken);
+        await notifier.NotifyAsync(videoId, cancellationToken);
     }
 
     private static async Task<IResult> PrefetchAsync(

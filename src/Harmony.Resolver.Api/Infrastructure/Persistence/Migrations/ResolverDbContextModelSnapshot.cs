@@ -161,6 +161,63 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.MetadataBackfillJobEntity", b =>
+                {
+                    b.Property<string>("VideoId")
+                        .HasMaxLength(11)
+                        .HasColumnType("character varying(11)")
+                        .HasColumnName("video_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("RetryAfter")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retry_after");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("VideoId");
+                    b.HasIndex("Status", "CreatedAt").HasDatabaseName("ix_resolver_metadata_jobs_pending")
+                        .HasFilter("status = 'pending'");
+                    b.ToTable("resolver_metadata_backfill_jobs", null, t =>
+                        t.HasCheckConstraint("ck_resolver_metadata_jobs_status", "status IN ('pending', 'failed')"));
+                });
+
+            modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.MetadataBackfillLeaseEntity", b =>
+                {
+                    b.Property<string>("VideoId")
+                        .HasMaxLength(11)
+                        .HasColumnType("character varying(11)")
+                        .HasColumnName("video_id");
+
+                    b.Property<DateTimeOffset>("AcquiredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("acquired_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.HasKey("VideoId");
+                    b.HasIndex("ExpiresAt").HasDatabaseName("ix_resolver_metadata_leases_expiry");
+                    b.ToTable("resolver_metadata_backfill_leases", null, t =>
+                        t.HasCheckConstraint("ck_resolver_metadata_leases_expiry", "expires_at > acquired_at"));
+                });
+
             modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.PlayEventEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -337,6 +394,22 @@ namespace Harmony.Resolver.Api.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Track");
+                });
+
+            modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.MetadataBackfillLeaseEntity", b =>
+                {
+                    b.HasOne("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.MetadataBackfillJobEntity", "Job")
+                        .WithOne("Lease")
+                        .HasForeignKey("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.MetadataBackfillLeaseEntity", "VideoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.MetadataBackfillJobEntity", b =>
+                {
+                    b.Navigation("Lease");
                 });
 
             modelBuilder.Entity("Harmony.Resolver.Api.Infrastructure.Persistence.Entities.TrackEntity", b =>

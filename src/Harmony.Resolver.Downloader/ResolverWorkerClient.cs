@@ -42,6 +42,38 @@ public sealed class ResolverWorkerClient(HttpClient http, Auth0TokenProvider tok
         return true;
     }
 
+    public async Task<bool> HeartbeatMetadataAsync(string videoId, Guid leaseToken, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"v1/worker/metadata-jobs/{videoId}/heartbeat");
+        request.Headers.TryAddWithoutValidation(LeaseHeader, leaseToken.ToString());
+        await AuthorizeAsync(request, cancellationToken);
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Conflict) return false;
+        response.EnsureSuccessStatusCode();
+        return true;
+    }
+
+    public async Task CompleteMetadataAsync(string videoId, Guid leaseToken, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"v1/worker/metadata-jobs/{videoId}/complete");
+        request.Headers.TryAddWithoutValidation(LeaseHeader, leaseToken.ToString());
+        await AuthorizeAsync(request, cancellationToken);
+        using var response = await http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task FailMetadataAsync(string videoId, Guid leaseToken, string code, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"v1/worker/metadata-jobs/{videoId}/fail")
+        {
+            Content = JsonContent.Create(new { code }, options: Json)
+        };
+        request.Headers.TryAddWithoutValidation(LeaseHeader, leaseToken.ToString());
+        await AuthorizeAsync(request, cancellationToken);
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (response.StatusCode != HttpStatusCode.Conflict) response.EnsureSuccessStatusCode();
+    }
+
     public async Task UploadAsync(string videoId, Guid leaseToken, string filePath, CancellationToken cancellationToken)
     {
         await using var file = File.OpenRead(filePath);

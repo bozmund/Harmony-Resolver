@@ -291,6 +291,26 @@ public sealed class PostgresTrackRepositoryTests : IAsyncLifetime
         Assert.Equal(new[] { "pendingbbbb", "pendingcccc" }, pending.ToArray());
     }
 
+    [Fact]
+    public async Task Metadata_backfill_job_is_claimed_without_changing_audio_track_state()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        const string id = "metadata001";
+        var audioLease = await repository.TryAcquireLeaseAsync(id, Guid.NewGuid(), TimeSpan.FromMinutes(2), CancellationToken.None);
+        await repository.MarkReadyAsync(audioLease!, $"tracks/{id}.ogg", 1, "\"etag\"", CancellationToken.None);
+
+        await repository.EnqueueMetadataBackfillAsync(id, CancellationToken.None);
+        var metadataLease = await repository.ClaimJobAsync(Guid.NewGuid(), TimeSpan.FromMinutes(2), CancellationToken.None);
+
+        Assert.NotNull(metadataLease);
+        Assert.Equal(id, metadataLease!.VideoId);
+        Assert.Equal("metadata", metadataLease.Kind);
+        Assert.Equal(TrackStatus.Ready, (await repository.GetAsync(id, CancellationToken.None))!.Status);
+        await repository.SetMetadataAsync(new TrackMetadata(id, "Title"), CancellationToken.None);
+        Assert.True(await repository.CompleteMetadataBackfillAsync(metadataLease, CancellationToken.None));
+        Assert.Null(await repository.ClaimJobAsync(Guid.NewGuid(), TimeSpan.FromMinutes(2), CancellationToken.None));
+    }
+
     private sealed class TestDbContextFactory(DbContextOptions<ResolverDbContext> options) : IDbContextFactory<ResolverDbContext>
     {
         public ResolverDbContext CreateDbContext() => new(options);

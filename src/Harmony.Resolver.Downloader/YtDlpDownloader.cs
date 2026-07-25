@@ -122,6 +122,40 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
         return new DownloadedMedia(path, YtDlpMetadataLine.Parse(lines));
     }
 
+    /// <summary>Fetches display fields only. yt-dlp never selects or writes media for this operation.</summary>
+    public async Task<DownloadedMetadata> FetchMetadataAsync(string videoId, CancellationToken cancellationToken)
+    {
+        if (!VideoIdPattern().IsMatch(videoId))
+            throw new DownloadException("invalid_video_id", "video id is not a valid 11-character YouTube id");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = options.YtDlpPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in BuildMetadataArguments(videoId)) startInfo.ArgumentList.Add(argument);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(options.DownloadTimeoutSeconds));
+        using var process = Process.Start(startInfo)
+            ?? throw new DownloadException("downloader_start_failed", "yt-dlp failed to start");
+        var outputTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var errorTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            TryKill(process);
+            throw new DownloadException("metadata_timeout", "yt-dlp exceeded the metadata timeout");
+        }
+        var lines = (await outputTask).Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var error = await errorTask;
+        var metadata = YtDlpMetadataLine.Parse(lines);
+        if (process.ExitCode != 0 || metadata is null)
+            throw new DownloadException("metadata_yt_dlp_failed", error, stage: "metadata", tool: "yt-dlp", exitCode: process.ExitCode);
+        return metadata;
+    }
+
     internal static string[] BuildArguments(
         string videoId, string outputTemplate, int maxDurationMinutes) =>
     [
@@ -131,6 +165,13 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
         "-o", outputTemplate,
         "--print", YtDlpMetadataLine.PrintTemplate,
         "--print", "after_move:filepath",
+        $"https://www.youtube.com/watch?v={videoId}"
+    ];
+
+    internal static string[] BuildMetadataArguments(string videoId) =>
+    [
+        "--no-playlist", "--no-progress", "--no-warnings", "--skip-download",
+        "--print", YtDlpMetadataLine.PrintTemplate,
         $"https://www.youtube.com/watch?v={videoId}"
     ];
 

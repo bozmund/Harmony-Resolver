@@ -19,6 +19,11 @@ public interface ITrackRepository
     /// lease, or <see langword="null"/> when the queue is empty.
     /// </summary>
     Task<IngestionLease?> ClaimJobAsync(Guid workerId, TimeSpan duration, CancellationToken cancellationToken);
+    Task EnqueueMetadataBackfillAsync(string videoId, CancellationToken cancellationToken);
+    Task<bool> RenewMetadataBackfillLeaseAsync(IngestionLease lease, TimeSpan duration, CancellationToken cancellationToken);
+    Task<bool> CompleteMetadataBackfillAsync(IngestionLease lease, CancellationToken cancellationToken);
+    Task<bool> FailMetadataBackfillAsync(IngestionLease lease, DateTimeOffset retryAfter, CancellationToken cancellationToken);
+    Task<bool> HasActiveWorkerLeaseAsync(IngestionLease lease, CancellationToken cancellationToken);
     /// <summary>
     /// Fails jobs stuck <c>ingesting</c> since before <paramref name="olderThan"/> that no worker is
     /// actively leasing, so listeners polling an unfillable job eventually get a definitive error.

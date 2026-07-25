@@ -119,6 +119,13 @@ public sealed class PostgresTrackRepository(
     // the RETURNING value directly.
     public async Task<IngestionLease?> ClaimJobAsync(Guid workerId, TimeSpan duration, CancellationToken cancellationToken)
     {
+        // Audio remains latency-critical. Metadata work runs only when the media queue is empty.
+        return await ClaimMediaJobAsync(workerId, duration, cancellationToken)
+            ?? await ClaimMetadataBackfillJobAsync(workerId, duration, cancellationToken);
+    }
+
+    private async Task<IngestionLease?> ClaimMediaJobAsync(Guid workerId, TimeSpan duration, CancellationToken cancellationToken)
+    {
         var now = clock.GetUtcNow();
         var expiresAt = now + duration;
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
@@ -168,6 +175,118 @@ public sealed class PostgresTrackRepository(
         }
     }
 
+    public async Task EnqueueMetadataBackfillAsync(string videoId, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        // A duplicate read must not reset a failed job's backoff or create a storm.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO resolver_metadata_backfill_jobs (video_id, status, created_at, updated_at)
+            VALUES ({videoId}, 'pending', {now}, {now})
+            ON CONFLICT (video_id) DO NOTHING
+            """, cancellationToken);
+    }
+
+    private async Task<IngestionLease?> ClaimMetadataBackfillJobAsync(
+        Guid workerId, TimeSpan duration, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        var expiresAt = now + duration;
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        var connection = db.Database.GetDbConnection();
+        var opened = false;
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+            opened = true;
+        }
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                WITH candidate AS (
+                    SELECT j.video_id
+                    FROM resolver_metadata_backfill_jobs j
+                    LEFT JOIN resolver_metadata_backfill_leases l ON l.video_id = j.video_id
+                    WHERE (j.status = 'pending' OR (j.status = 'failed' AND j.retry_after <= @now))
+                      AND (l.video_id IS NULL OR l.expires_at <= @now)
+                    ORDER BY j.created_at
+                    LIMIT 1
+                    FOR UPDATE OF j SKIP LOCKED
+                ), claimed AS (
+                    INSERT INTO resolver_metadata_backfill_leases (video_id, owner_id, acquired_at, expires_at)
+                    SELECT video_id, @owner, @now, @expires FROM candidate
+                    ON CONFLICT (video_id) DO UPDATE
+                    SET owner_id = EXCLUDED.owner_id, acquired_at = EXCLUDED.acquired_at, expires_at = EXCLUDED.expires_at
+                    WHERE resolver_metadata_backfill_leases.expires_at <= @now
+                    RETURNING video_id
+                )
+                UPDATE resolver_metadata_backfill_jobs j
+                SET status = 'pending', retry_after = NULL, updated_at = @now
+                FROM claimed c WHERE j.video_id = c.video_id
+                RETURNING j.video_id;
+                """;
+            AddParameter(command, "now", now);
+            AddParameter(command, "owner", workerId);
+            AddParameter(command, "expires", expiresAt);
+            var value = await command.ExecuteScalarAsync(cancellationToken);
+            return value is string videoId ? new IngestionLease(videoId, workerId, expiresAt, "metadata") : null;
+        }
+        finally
+        {
+            if (opened) await connection.CloseAsync();
+        }
+    }
+
+    public async Task<bool> RenewMetadataBackfillLeaseAsync(
+        IngestionLease lease, TimeSpan duration, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        return await db.MetadataBackfillLeases
+            .Where(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId && x.ExpiresAt > now)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, now + duration), cancellationToken) == 1;
+    }
+
+    public async Task<bool> CompleteMetadataBackfillAsync(IngestionLease lease, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var deleted = await db.MetadataBackfillJobs
+            .Where(j => j.VideoId == lease.VideoId && db.MetadataBackfillLeases.Any(l =>
+                l.VideoId == j.VideoId && l.OwnerId == lease.OwnerId && l.ExpiresAt > now))
+            .ExecuteDeleteAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return deleted == 1;
+    }
+
+    public async Task<bool> FailMetadataBackfillAsync(
+        IngestionLease lease, DateTimeOffset retryAfter, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var updated = await db.MetadataBackfillJobs
+            .Where(j => j.VideoId == lease.VideoId && db.MetadataBackfillLeases.Any(l =>
+                l.VideoId == j.VideoId && l.OwnerId == lease.OwnerId && l.ExpiresAt > now))
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "failed")
+                .SetProperty(x => x.RetryAfter, retryAfter).SetProperty(x => x.UpdatedAt, now), cancellationToken);
+        if (updated == 1)
+            await db.MetadataBackfillLeases.Where(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId)
+                .ExecuteDeleteAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return updated == 1;
+    }
+
+    public async Task<bool> HasActiveWorkerLeaseAsync(IngestionLease lease, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        return await db.IngestionLeases.AnyAsync(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId && x.ExpiresAt > now, cancellationToken)
+            || await db.MetadataBackfillLeases.AnyAsync(x => x.VideoId == lease.VideoId && x.OwnerId == lease.OwnerId && x.ExpiresAt > now, cancellationToken);
+    }
+
     public async Task<int> FailStuckJobsAsync(DateTimeOffset olderThan, DateTimeOffset retryAfter, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
@@ -188,13 +307,21 @@ public sealed class PostgresTrackRepository(
         DateTimeOffset now, int limit, CancellationToken cancellationToken)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        return await db.Tracks.AsNoTracking()
+        var media = await db.Tracks.AsNoTracking()
             .Where(t => t.Status == "ingesting"
                 && !db.IngestionLeases.Any(l => l.VideoId == t.VideoId && l.ExpiresAt > now))
             .OrderBy(t => t.CreatedAt)
             .Take(Math.Min(limit, 200))
             .Select(t => t.VideoId)
             .ToListAsync(cancellationToken);
+        if (media.Count >= limit) return media;
+        var metadata = await db.MetadataBackfillJobs.AsNoTracking()
+            .Where(j => (j.Status == "pending" || (j.Status == "failed" && j.RetryAfter <= now))
+                && !db.MetadataBackfillLeases.Any(l => l.VideoId == j.VideoId && l.ExpiresAt > now))
+            .OrderBy(j => j.CreatedAt).Take(Math.Min(limit - media.Count, 200))
+            .Select(j => j.VideoId).ToListAsync(cancellationToken);
+        media.AddRange(metadata);
+        return media;
     }
 
     private static void AddParameter(System.Data.Common.DbCommand command, string name, object value)

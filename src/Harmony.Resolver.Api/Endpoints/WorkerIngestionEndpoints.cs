@@ -27,6 +27,9 @@ public static class WorkerIngestionEndpoints
 
         group.MapPost("/jobs/claim", ClaimAsync);
         group.MapPost("/jobs/{videoId}/heartbeat", HeartbeatAsync);
+        group.MapPost("/metadata-jobs/{videoId}/heartbeat", MetadataHeartbeatAsync);
+        group.MapPost("/metadata-jobs/{videoId}/complete", CompleteMetadataBackfillAsync);
+        group.MapPost("/metadata-jobs/{videoId}/fail", FailMetadataBackfillAsync);
         group.MapPost("/tracks/{videoId}/metadata", ReportMetadataAsync);
         group.MapPut("/tracks/{videoId}/audio", UploadAudioAsync);
         group.MapPost("/tracks/{videoId}/verify-backup", VerifyBackupAsync);
@@ -42,7 +45,8 @@ public static class WorkerIngestionEndpoints
         CancellationToken cancellationToken)
     {
         if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
-        if (!TryLease(context, videoId, out _)) return MissingLease();
+        if (!TryLease(context, videoId, out var lease)) return MissingLease();
+        if (!await tracks.HasActiveWorkerLeaseAsync(lease, cancellationToken)) return LeaseLost();
         if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 300)
             return Results.BadRequest(new { code = "invalid_metadata" });
 
@@ -82,6 +86,37 @@ public static class WorkerIngestionEndpoints
             ? Results.Ok(new WorkerJob(
                 videoId, lease.OwnerId, clock.GetUtcNow() + options.LeaseDuration, lease.Kind))
             : LeaseLost();
+    }
+
+    private static async Task<IResult> MetadataHeartbeatAsync(
+        string videoId, HttpContext context, ITrackRepository tracks, ResolverOptions options,
+        TimeProvider clock, CancellationToken cancellationToken)
+    {
+        if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
+        if (!TryLease(context, videoId, out var lease)) return MissingLease();
+        var renewed = await tracks.RenewMetadataBackfillLeaseAsync(lease, options.LeaseDuration, cancellationToken);
+        return renewed
+            ? Results.Ok(new WorkerJob(videoId, lease.OwnerId, clock.GetUtcNow() + options.LeaseDuration, "metadata"))
+            : LeaseLost();
+    }
+
+    private static async Task<IResult> CompleteMetadataBackfillAsync(
+        string videoId, HttpContext context, ITrackRepository tracks, CancellationToken cancellationToken)
+    {
+        if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
+        if (!TryLease(context, videoId, out var lease)) return MissingLease();
+        return await tracks.CompleteMetadataBackfillAsync(lease, cancellationToken) ? Results.NoContent() : LeaseLost();
+    }
+
+    private static async Task<IResult> FailMetadataBackfillAsync(
+        string videoId, HttpContext context, WorkerFailRequest? request, ITrackRepository tracks,
+        TimeProvider clock, CancellationToken cancellationToken)
+    {
+        if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
+        if (!TryLease(context, videoId, out var lease)) return MissingLease();
+        var failed = await tracks.FailMetadataBackfillAsync(
+            lease, clock.GetUtcNow() + TimeSpan.FromMinutes(15), cancellationToken);
+        return failed ? Results.NoContent() : LeaseLost();
     }
 
     private static async Task<IResult> UploadAudioAsync(
