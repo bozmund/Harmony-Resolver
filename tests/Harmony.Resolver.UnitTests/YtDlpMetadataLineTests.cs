@@ -8,8 +8,8 @@ public sealed class YtDlpMetadataLineTests
 {
     private const char Separator = '\u001f';
 
-    private static string MetadataLine(string title, string channel, string duration, string thumbnail) =>
-        $"{ApiMetadataLine.Prefix}{title}{Separator}{channel}{Separator}{duration}{Separator}{thumbnail}";
+    private static string MetadataLine(string title, string artist, string duration, string thumbnail) =>
+        $"{ApiMetadataLine.Prefix}{title}{Separator}{artist}{Separator}NA{Separator}{duration}{Separator}{thumbnail}";
 
     [Fact]
     public void Api_parses_all_fields()

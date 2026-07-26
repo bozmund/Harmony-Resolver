@@ -16,7 +16,7 @@ public sealed class PostgresTrackRepository(
         return entity is null
             ? null
             : new StoredTrack(entity.VideoId, ParseStatus(entity.Status), entity.ObjectKey, entity.ContentLength,
-                entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt,
+                entity.ETag, entity.FailureCode, entity.RetryAfter, null,
                 (IngestionPriority)entity.Priority);
     }
 
@@ -382,24 +382,6 @@ public sealed class PostgresTrackRepository(
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken);
     }
 
-    public async Task<IReadOnlyList<StoredTrack>> ListExpiredAsync(
-        DateTimeOffset now, int limit, CancellationToken cancellationToken)
-    {
-        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        var entities = await db.Tracks.AsNoTracking()
-            .Where(x => x.Status == "ready" && x.ExpiresAt <= now && x.ObjectKey != null)
-            .OrderBy(x => x.ExpiresAt).Take(limit).ToListAsync(cancellationToken);
-        return entities.Select(ToStoredTrack).ToArray();
-    }
-
-    public async Task<bool> DeleteExpiredAsync(
-        string videoId, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        return await db.Tracks.Where(x => x.VideoId == videoId && x.Status == "ready" && x.ExpiresAt <= now)
-            .ExecuteDeleteAsync(cancellationToken) == 1;
-    }
-
     public async Task<IReadOnlyList<StoredTrack>> ListFailuresAsync(
         DateTimeOffset since, int limit, CancellationToken cancellationToken)
     {
@@ -430,11 +412,9 @@ public sealed class PostgresTrackRepository(
     public async Task<TrackMetadata?> GetMetadataAsync(string videoId, CancellationToken cancellationToken)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        var entity = await db.TrackMetadata.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.VideoId == videoId, cancellationToken);
-        if (entity is null) return null;
-        var metadata = ToMetadata(entity);
-        return metadata.IsEmpty ? null : metadata;
+        var json = await db.Tracks.AsNoTracking().Where(x => x.VideoId == videoId)
+            .Select(x => x.MetadataJson).SingleOrDefaultAsync(cancellationToken);
+        return string.IsNullOrWhiteSpace(json) ? null : FromJson(videoId, json);
     }
 
     public async Task<IReadOnlyList<TrackMetadata>> GetMetadataBatchAsync(
@@ -444,52 +424,49 @@ public sealed class PostgresTrackRepository(
         var ids = videoIds as string[] ?? videoIds.ToArray();
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         // Single round trip: Npgsql translates Contains over an array to `video_id = ANY(@ids)`.
-        var entities = await db.TrackMetadata.AsNoTracking()
-            .Where(x => ids.Contains(x.VideoId) && x.Title != null)
-            .ToListAsync(cancellationToken);
-        return entities.Select(ToMetadata).Where(x => !x.IsEmpty).ToList();
+        var entities = await db.Tracks.AsNoTracking().Where(x => ids.Contains(x.VideoId) && x.MetadataJson != null)
+            .Select(x => new { x.VideoId, x.MetadataJson }).ToListAsync(cancellationToken);
+        return entities.Select(x => FromJson(x.VideoId, x.MetadataJson!)).ToList();
     }
 
     public async Task SetMetadataAsync(TrackMetadata metadata, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        var artists = metadata.Artists is { Count: > 0 }
-            ? JsonSerializer.Serialize(metadata.Artists)
-            : null;
+        using var document = JsonDocument.Parse(metadata.ToJson());
+        var json = document.RootElement.GetRawText();
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
         // Upsert rather than update-then-insert: concurrent ingestion and lazy-fill writers for the
         // same video are expected, and last-writer-wins is fine for display metadata.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO resolver_track_metadata
-                (video_id, title, artists, album, duration_seconds, thumbnail_url, created_at, updated_at)
-            VALUES ({metadata.VideoId}, {metadata.Title}, {artists}::jsonb, {metadata.Album},
-                    {metadata.DurationSeconds}, {metadata.ThumbnailUrl}, {now}, {now})
-            ON CONFLICT (video_id) DO UPDATE
-            SET title = EXCLUDED.title,
-                artists = EXCLUDED.artists,
-                album = EXCLUDED.album,
-                duration_seconds = EXCLUDED.duration_seconds,
-                thumbnail_url = EXCLUDED.thumbnail_url,
-                updated_at = EXCLUDED.updated_at
+            INSERT INTO resolver_tracks (video_id, status, metadata, last_accessed_at, created_at, updated_at, priority, ingestion_kind)
+            VALUES ({metadata.VideoId}, 'metadata', {json}::jsonb, {now}, {now}, {now}, 0, 'metadata')
+            ON CONFLICT (video_id) DO UPDATE SET metadata = EXCLUDED.metadata, updated_at = EXCLUDED.updated_at
             """, cancellationToken);
     }
 
-    private static TrackMetadata ToMetadata(Entities.TrackMetadataEntity entity) => new(
-        entity.VideoId, entity.Title, DeserializeArtists(entity.ArtistsJson), entity.Album,
-        entity.DurationSeconds, entity.ThumbnailUrl, entity.UpdatedAt);
+    public Task<IReadOnlyList<StoredTrack>> ListExpiredAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<StoredTrack>>([]);
 
-    private static IReadOnlyList<string>? DeserializeArtists(string? json)
+    public Task<bool> DeleteExpiredAsync(string videoId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+
+    private static TrackMetadata FromJson(string videoId, string json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try
-        {
-            return JsonSerializer.Deserialize<List<string>>(json);
-        }
-        catch (JsonException)
-        {
-            // Never let one malformed row fail a whole batch read.
-            return null;
-        }
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var title = root.TryGetProperty("title", out var value) ? value.GetString() : null;
+        var artists = root.TryGetProperty("artists", out var artistsElement) && artistsElement.ValueKind == JsonValueKind.Array
+            ? artistsElement.EnumerateArray().Select(artist =>
+                artist.ValueKind == JsonValueKind.Object && artist.TryGetProperty("name", out var name)
+                    ? name.GetString() : artist.GetString()).Where(name => !string.IsNullOrWhiteSpace(name)).Cast<string>().ToArray()
+            : null;
+        var album = root.TryGetProperty("album", out var albumElement) && albumElement.ValueKind == JsonValueKind.Object
+            && albumElement.TryGetProperty("name", out var albumName) ? albumName.GetString() : null;
+        int? duration = root.TryGetProperty("duration", out var durationElement) && durationElement.ValueKind == JsonValueKind.Number && durationElement.TryGetInt32(out var seconds)
+            ? seconds : null;
+        var thumbnail = root.TryGetProperty("thumbnails", out var thumbnails) && thumbnails.ValueKind == JsonValueKind.Array
+            && thumbnails.GetArrayLength() > 0 && thumbnails[0].TryGetProperty("url", out var url) ? url.GetString() : null;
+        return new TrackMetadata(videoId, title, artists, album, duration, thumbnail, Json: json);
     }
 
     private async Task<bool> CompleteAsync(
@@ -510,7 +487,6 @@ public sealed class PostgresTrackRepository(
                 .SetProperty(x => x.ETag, etag)
                 .SetProperty(x => x.FailureCode, failureCode)
                 .SetProperty(x => x.RetryAfter, retryAfter)
-                .SetProperty(x => x.ExpiresAt, expiresAt)
                 .SetProperty(x => x.UpdatedAt, now), cancellationToken);
         if (updated != 1)
         {
@@ -527,6 +503,7 @@ public sealed class PostgresTrackRepository(
     private static TrackStatus ParseStatus(string status) => status switch
     {
         "ingesting" => TrackStatus.Ingesting,
+        "metadata" => TrackStatus.Metadata,
         "ready" => TrackStatus.Ready,
         "failed" => TrackStatus.Failed,
         _ => throw new InvalidDataException($"Unknown persisted track status '{status}'.")
@@ -534,6 +511,6 @@ public sealed class PostgresTrackRepository(
 
     private static StoredTrack ToStoredTrack(Entities.TrackEntity entity) =>
         new(entity.VideoId, ParseStatus(entity.Status), entity.ObjectKey, entity.ContentLength,
-            entity.ETag, entity.FailureCode, entity.RetryAfter, entity.ExpiresAt,
+            entity.ETag, entity.FailureCode, entity.RetryAfter, null,
             (IngestionPriority)entity.Priority);
 }

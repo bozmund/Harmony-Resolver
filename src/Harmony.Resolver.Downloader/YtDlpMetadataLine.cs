@@ -12,7 +12,7 @@ public static class YtDlpMetadataLine
     private const string Separator = "\u001f";
 
     public const string PrintTemplate =
-        $"{Prefix}%(title)s{Separator}%(channel)s{Separator}%(duration)s{Separator}%(thumbnail)s";
+        $"{Prefix}%(title)s{Separator}%(artist)s{Separator}%(album)s{Separator}%(duration)s{Separator}%(thumbnail)s";
 
     /// The last line that is not our metadata line — i.e. the downloaded file path.
     public static string? LastNonMetadataLine(IEnumerable<string> lines) => lines
@@ -27,15 +27,17 @@ public static class YtDlpMetadataLine
         if (line is null) return null;
 
         var fields = line[Prefix.Length..].Split(Separator);
-        if (fields.Length != 4) return null;
+        if (fields.Length is not (4 or 5)) return null;
         var title = Value(fields[0]);
         if (title is null) return null;
-        var channel = Value(fields[1]);
+        var artist = Value(fields[1]);
+        var legacy = fields.Length == 4;
         return new DownloadedMetadata(
             title,
-            channel is null ? null : [channel],
-            DurationSeconds: int.TryParse(Value(fields[2]), out var seconds) ? seconds : null,
-            ThumbnailUrl: Value(fields[3]));
+            artist is null ? null : [artist],
+            Album: legacy ? null : Value(fields[2]),
+            DurationSeconds: int.TryParse(Value(fields[legacy ? 2 : 3]), out var seconds) ? seconds : null,
+            ThumbnailUrl: Value(fields[legacy ? 3 : 4]));
     }
 
     /// yt-dlp prints the literal "NA" for fields it could not determine.
@@ -49,6 +51,7 @@ public static class YtDlpMetadataLine
 public sealed record DownloadedMetadata(
     string Title,
     IReadOnlyList<string>? Artists = null,
+    string? Album = null,
     int? DurationSeconds = null,
     string? ThumbnailUrl = null);
 

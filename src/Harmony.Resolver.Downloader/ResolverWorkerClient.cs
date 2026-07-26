@@ -99,6 +99,7 @@ public sealed class ResolverWorkerClient(HttpClient http, Auth0TokenProvider tok
             {
                 metadata.Title,
                 metadata.Artists,
+                metadata.Album,
                 metadata.DurationSeconds,
                 metadata.ThumbnailUrl
             }, options: Json)

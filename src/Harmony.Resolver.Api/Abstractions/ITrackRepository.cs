@@ -40,6 +40,7 @@ public interface ITrackRepository
     Task<bool> MarkReadyAsync(IngestionLease lease, string objectKey, long contentLength, string etag, CancellationToken cancellationToken);
     Task<bool> MarkFailedAsync(IngestionLease lease, string failureCode, DateTimeOffset retryAfter, CancellationToken cancellationToken);
     Task TouchAsync(string videoId, CancellationToken cancellationToken);
+    // Kept as inert compatibility hooks while permanent-media callers roll forward.
     Task<IReadOnlyList<StoredTrack>> ListExpiredAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
     Task<bool> DeleteExpiredAsync(string videoId, DateTimeOffset now, CancellationToken cancellationToken);
     Task<IReadOnlyList<StoredTrack>> ListFailuresAsync(DateTimeOffset since, int limit, CancellationToken cancellationToken);

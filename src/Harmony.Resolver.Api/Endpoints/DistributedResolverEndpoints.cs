@@ -33,7 +33,7 @@ public static class DistributedResolverEndpoints
     {
         if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
         var metadata = await tracks.GetMetadataAsync(videoId, cancellationToken);
-        if (metadata is not null) return Results.Ok(TrackMetadataResponse.Ready(metadata));
+        if (metadata is not null) return Results.Content(metadata.ToJson(), "application/json");
         await EnqueueMetadataBackfillAsync(videoId, tracks, backfill, options, notifier, cancellationToken);
         return Results.Ok(TrackMetadataResponse.Missing(videoId));
     }

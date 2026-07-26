@@ -10,7 +10,6 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
     public DbSet<DiagnosticAuditEntity> DiagnosticAudits => Set<DiagnosticAuditEntity>();
     public DbSet<PlayEventEntity> PlayEvents => Set<PlayEventEntity>();
     public DbSet<BackupCandidateEntity> BackupCandidates => Set<BackupCandidateEntity>();
-    public DbSet<TrackMetadataEntity> TrackMetadata => Set<TrackMetadataEntity>();
     public DbSet<MetadataBackfillJobEntity> MetadataBackfillJobs => Set<MetadataBackfillJobEntity>();
     public DbSet<MetadataBackfillLeaseEntity> MetadataBackfillLeases => Set<MetadataBackfillLeaseEntity>();
 
@@ -19,7 +18,7 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         var tracks = modelBuilder.Entity<TrackEntity>();
         tracks.ToTable("resolver_tracks", table =>
         {
-            table.HasCheckConstraint("ck_resolver_tracks_status", "status IN ('ingesting', 'ready', 'failed')");
+            table.HasCheckConstraint("ck_resolver_tracks_status", "status IN ('metadata', 'ingesting', 'ready', 'failed')");
             table.HasCheckConstraint("ck_resolver_tracks_ready_object", "(status = 'ready') = (object_key IS NOT NULL)");
         });
         tracks.HasKey(x => x.VideoId);
@@ -31,7 +30,7 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         tracks.Property(x => x.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
         tracks.Property(x => x.RetryAfter).HasColumnName("retry_after");
         tracks.Property(x => x.LastAccessedAt).HasColumnName("last_accessed_at");
-        tracks.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+        tracks.Property(x => x.MetadataJson).HasColumnName("metadata").HasColumnType("jsonb");
         tracks.Property(x => x.Priority).HasColumnName("priority");
         tracks.Property(x => x.IngestionKind).HasColumnName("ingestion_kind").HasMaxLength(24);
         tracks.Property(x => x.CreatedAt).HasColumnName("created_at");
@@ -39,18 +38,6 @@ public sealed class ResolverDbContext(DbContextOptions<ResolverDbContext> option
         tracks.HasIndex(x => x.UpdatedAt).HasDatabaseName("ix_resolver_tracks_failures").HasFilter("status = 'failed'").IsDescending();
         tracks.HasIndex(x => new { x.Priority, x.CreatedAt }).HasDatabaseName("ix_resolver_tracks_pending")
             .HasFilter("status = 'ingesting'").IsDescending(true, false);
-
-        var metadata = modelBuilder.Entity<TrackMetadataEntity>();
-        metadata.ToTable("resolver_track_metadata");
-        metadata.HasKey(x => x.VideoId);
-        metadata.Property(x => x.VideoId).HasColumnName("video_id").HasMaxLength(11);
-        metadata.Property(x => x.Title).HasColumnName("title").HasMaxLength(300);
-        metadata.Property(x => x.ArtistsJson).HasColumnName("artists").HasColumnType("jsonb");
-        metadata.Property(x => x.Album).HasColumnName("album").HasMaxLength(300);
-        metadata.Property(x => x.DurationSeconds).HasColumnName("duration_seconds");
-        metadata.Property(x => x.ThumbnailUrl).HasColumnName("thumbnail_url").HasMaxLength(500);
-        metadata.Property(x => x.CreatedAt).HasColumnName("created_at");
-        metadata.Property(x => x.UpdatedAt).HasColumnName("updated_at");
 
         var metadataJobs = modelBuilder.Entity<MetadataBackfillJobEntity>();
         metadataJobs.ToTable("resolver_metadata_backfill_jobs", table =>
