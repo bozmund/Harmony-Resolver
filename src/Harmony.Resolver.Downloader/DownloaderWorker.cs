@@ -28,15 +28,34 @@ public sealed class DownloaderWorker(
     private readonly SemaphoreSlim _drainGate = new(1, 1);
 
     /// <summary>
-    /// Enriches yt-dlp's video-shaped metadata with YouTube Music's, which is the only source of an
-    /// album browse id, artist ids and square cover art. A miss leaves the yt-dlp view untouched:
-    /// richness is optional, coverage is not.
+    /// Resolves display metadata, preferring YouTube Music: it is the only source of an album
+    /// browse id, artist ids and square cover art, and yt-dlp only ever describes the video.
+    ///
+    /// Music is asked first rather than layered on top, so a video yt-dlp cannot read at all —
+    /// unavailable, region-locked, blocked — still gets metadata whenever the Music catalogue knows
+    /// the track. Falling back the other way round meant yt-dlp's failure killed the job before
+    /// Music was ever consulted.
+    ///
+    /// <paramref name="fallback"/> is the yt-dlp view when one is already in hand (it comes free
+    /// with an audio download); pass null to have it fetched only if Music misses. Throws only when
+    /// neither source answers.
     /// </summary>
-    private async Task<DownloadedMetadata> EnrichAsync(
-        string videoId, DownloadedMetadata fallback, CancellationToken cancellationToken)
+    private async Task<DownloadedMetadata> ResolveMetadataAsync(
+        string videoId,
+        DownloadedMetadata? fallback,
+        CancellationToken cancellationToken)
     {
         var song = await musicMetadata.FetchSongAsync(videoId, cancellationToken);
-        return song is null ? fallback : YouTubeMusicMetadataClient.Combine(song, fallback);
+        if (song is not null)
+        {
+            var combined = YouTubeMusicMetadataClient.Combine(song, fallback);
+            // A document with no usable title would be rejected as invalid_metadata, so treat it
+            // as a miss rather than trading a working yt-dlp answer for a failed job.
+            if (!string.IsNullOrWhiteSpace(combined.Title)) return combined;
+        }
+        // No Music entry: a plain video, or an upstream shape change. Either way the yt-dlp view is
+        // all there is, and its own failure is what fails the job.
+        return fallback ?? await downloader.FetchMetadataAsync(videoId, cancellationToken);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -210,10 +229,10 @@ public sealed class DownloaderWorker(
             }
             if (job.Kind == "metadata")
             {
-                var backfillMetadata = await EnrichAsync(
-                    job.VideoId,
-                    await downloader.FetchMetadataAsync(job.VideoId, jobCts.Token),
-                    jobCts.Token);
+                // Music first, yt-dlp only if it misses: a backfill must not die on a video yt-dlp
+                // cannot read when the Music catalogue still knows the track.
+                var backfillMetadata = await ResolveMetadataAsync(
+                    job.VideoId, fallback: null, jobCts.Token);
                 await client.ReportMetadataAsync(job.VideoId, job.LeaseToken, backfillMetadata, stoppingToken);
                 await client.CompleteMetadataAsync(job.VideoId, job.LeaseToken, stoppingToken);
                 logger.LogInformation("Backfilled metadata for {VideoId}.", job.VideoId);
@@ -229,7 +248,8 @@ public sealed class DownloaderWorker(
                     await client.ReportMetadataAsync(
                         job.VideoId,
                         job.LeaseToken,
-                        await EnrichAsync(job.VideoId, metadata, jobCts.Token),
+                        // The yt-dlp view came free with the download, so it is the fallback here.
+                        await ResolveMetadataAsync(job.VideoId, metadata, jobCts.Token),
                         stoppingToken);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
