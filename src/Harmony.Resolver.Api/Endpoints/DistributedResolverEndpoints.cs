@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Pipelines;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Harmony.Resolver.Api.Abstractions;
 using Harmony.Resolver.Api.Configuration;
 using Harmony.Resolver.Api.Diagnostics;
@@ -52,7 +54,7 @@ public static class DistributedResolverEndpoints
             .ToDictionary(x => x.VideoId, StringComparer.Ordinal);
         // Preserve request order and always answer for every id, so the client can zip the response
         // against its queue without a second lookup.
-        var results = new List<TrackMetadataResponse>(request.VideoIds.Count);
+        var results = new List<JsonObject>(request.VideoIds.Count);
         foreach (var videoId in request.VideoIds)
         {
             if (found.TryGetValue(videoId, out var metadata))
@@ -440,25 +442,40 @@ public static class DistributedResolverEndpoints
 
 public sealed record TrackMetadataBatchRequest(IReadOnlyList<string> VideoIds);
 
-public sealed record TrackMetadataBatchResponse(IReadOnlyList<TrackMetadataResponse> Tracks);
+public sealed record TrackMetadataBatchResponse(IReadOnlyList<JsonObject> Tracks);
 
-/// <param name="Status"><c>ready</c> when metadata is known, <c>missing</c> when a lazy fill was
-/// scheduled. Mirrors <see cref="TrackInfo"/>'s convention of synthesizing a status rather than
-/// returning 404, so a batch response can answer for every requested id.</param>
-public sealed record TrackMetadataResponse(
-    string VideoId,
-    string Status,
-    string? Title = null,
-    IReadOnlyList<string>? Artists = null,
-    string? Album = null,
-    int? DurationSeconds = null,
-    string? ThumbnailUrl = null)
+/// <summary>
+/// One track in a batch response: the stored Harmony song document with <c>videoId</c> and
+/// <c>status</c> stamped on it.
+///
+/// This deliberately does not flatten. Flattening cost clients the album browse id and artist ids
+/// — the very things "go to album" and artist links need — and emitted <c>album</c> as a bare
+/// string, which the app parses as an object, so every track that *had* an album was thrown away
+/// client-side. The single-track route has always returned the document verbatim; this matches it.
+/// </summary>
+public static class TrackMetadataResponse
 {
-    public static TrackMetadataResponse Ready(TrackMetadata metadata) => new(
-        metadata.VideoId, "ready", metadata.Title, metadata.Artists, metadata.Album,
-        metadata.DurationSeconds, metadata.ThumbnailUrl);
+    public static JsonObject Ready(TrackMetadata metadata)
+    {
+        JsonObject song;
+        try
+        {
+            song = JsonNode.Parse(metadata.ToJson()) as JsonObject ?? [];
+        }
+        catch (JsonException)
+        {
+            song = [];
+        }
+        song["videoId"] = metadata.VideoId;
+        song["status"] = "ready";
+        return song;
+    }
 
-    public static TrackMetadataResponse Missing(string videoId) => new(videoId, "missing");
+    public static JsonObject Missing(string videoId) => new()
+    {
+        ["videoId"] = videoId,
+        ["status"] = "missing"
+    };
 }
 
 public sealed record PrefetchRequest(IReadOnlyList<string> VideoIds);

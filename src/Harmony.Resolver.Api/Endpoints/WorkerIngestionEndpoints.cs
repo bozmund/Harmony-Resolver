@@ -56,8 +56,34 @@ public static class WorkerIngestionEndpoints
             request.Artists?.Where(x => !string.IsNullOrWhiteSpace(x)).Take(8).ToList(),
             Truncate(request.Album, 300),
             request.DurationSeconds is > 0 ? request.DurationSeconds : null,
-            Truncate(request.ThumbnailUrl, 500)), cancellationToken);
+            Truncate(request.ThumbnailUrl, 500),
+            Json: SanitizeSong(videoId, request.Song)), cancellationToken);
         return Results.NoContent();
+    }
+
+    /// <summary>
+    /// Accepts the worker's rich song document only when it is a JSON object for this very video.
+    /// It is stored verbatim and served to clients, so a malformed or mismatched document must fall
+    /// back to the flat fields rather than becoming the track's identity. Workers predating this
+    /// field simply send null.
+    /// </summary>
+    private static string? SanitizeSong(string videoId, string? song)
+    {
+        if (string.IsNullOrWhiteSpace(song) || song.Length > 16 * 1024) return null;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(song);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (!document.RootElement.TryGetProperty("videoId", out var id)
+                || id.ValueKind != System.Text.Json.JsonValueKind.String
+                || id.GetString() != videoId)
+                return null;
+            return document.RootElement.GetRawText();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     private static string? Truncate(string? value, int maximumLength)
@@ -337,6 +363,12 @@ public sealed record WorkerMetadataRequest(
     IReadOnlyList<string>? Artists = null,
     string? Album = null,
     int? DurationSeconds = null,
-    string? ThumbnailUrl = null);
+    string? ThumbnailUrl = null,
+    /// <summary>
+    /// Harmony-shaped song JSON from YouTube Music, carrying the album browse id, artist ids and
+    /// square cover art the flat fields cannot express. Optional: workers that predate it, and
+    /// videos with no Music entry, send null and the flat view stands alone.
+    /// </summary>
+    string? Song = null);
 public sealed record BackupVerificationRequest(
     double DurationSeconds, string FingerprintA, string FingerprintB);

@@ -20,11 +20,24 @@ namespace Harmony.Resolver.Downloader;
 public sealed class DownloaderWorker(
     ResolverWorkerClient client,
     YtDlpDownloader downloader,
+    YouTubeMusicMetadataClient musicMetadata,
     SourceFingerprintService fingerprints,
     DownloaderOptions options,
     ILogger<DownloaderWorker> logger) : BackgroundService
 {
     private readonly SemaphoreSlim _drainGate = new(1, 1);
+
+    /// <summary>
+    /// Enriches yt-dlp's video-shaped metadata with YouTube Music's, which is the only source of an
+    /// album browse id, artist ids and square cover art. A miss leaves the yt-dlp view untouched:
+    /// richness is optional, coverage is not.
+    /// </summary>
+    private async Task<DownloadedMetadata> EnrichAsync(
+        string videoId, DownloadedMetadata fallback, CancellationToken cancellationToken)
+    {
+        var song = await musicMetadata.FetchSongAsync(videoId, cancellationToken);
+        return song is null ? fallback : YouTubeMusicMetadataClient.Combine(song, fallback);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -197,7 +210,10 @@ public sealed class DownloaderWorker(
             }
             if (job.Kind == "metadata")
             {
-                var backfillMetadata = await downloader.FetchMetadataAsync(job.VideoId, jobCts.Token);
+                var backfillMetadata = await EnrichAsync(
+                    job.VideoId,
+                    await downloader.FetchMetadataAsync(job.VideoId, jobCts.Token),
+                    jobCts.Token);
                 await client.ReportMetadataAsync(job.VideoId, job.LeaseToken, backfillMetadata, stoppingToken);
                 await client.CompleteMetadataAsync(job.VideoId, job.LeaseToken, stoppingToken);
                 logger.LogInformation("Backfilled metadata for {VideoId}.", job.VideoId);
@@ -210,7 +226,11 @@ public sealed class DownloaderWorker(
             {
                 try
                 {
-                    await client.ReportMetadataAsync(job.VideoId, job.LeaseToken, metadata, stoppingToken);
+                    await client.ReportMetadataAsync(
+                        job.VideoId,
+                        job.LeaseToken,
+                        await EnrichAsync(job.VideoId, metadata, jobCts.Token),
+                        stoppingToken);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {

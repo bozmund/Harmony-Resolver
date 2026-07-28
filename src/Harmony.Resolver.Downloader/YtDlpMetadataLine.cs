@@ -53,6 +53,11 @@ public sealed record DownloadedMetadata(
     IReadOnlyList<string>? Artists = null,
     string? Album = null,
     int? DurationSeconds = null,
-    string? ThumbnailUrl = null);
+    string? ThumbnailUrl = null,
+    /// <summary>
+    /// Harmony-shaped song JSON from YouTube Music, carrying the album browse id, artist ids and
+    /// square cover art the flat fields above cannot express. Null when only yt-dlp answered.
+    /// </summary>
+    string? Song = null);
 
 public sealed record DownloadedMedia(string Path, DownloadedMetadata? Metadata = null);

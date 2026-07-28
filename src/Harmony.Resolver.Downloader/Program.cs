@@ -3,6 +3,7 @@ using Harmony.Resolver.Downloader;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 LoadDotEnvFile();
 LoadUserSecretsFallback();
@@ -16,6 +17,11 @@ builder.Services.AddSingleton(sp => new ResolverWorkerClient(
     new HttpClient { BaseAddress = new Uri(options.ResolverBaseUrl), Timeout = TimeSpan.FromMinutes(10) },
     sp.GetRequiredService<Auth0TokenProvider>()));
 builder.Services.AddSingleton<YtDlpDownloader>();
+// A short timeout on purpose: this is an optional enrichment on top of metadata the fleet already
+// has, so it must never hold a job open waiting for YouTube.
+builder.Services.AddSingleton(sp => new YouTubeMusicMetadataClient(
+    new HttpClient { Timeout = TimeSpan.FromSeconds(15) },
+    sp.GetRequiredService<ILogger<YouTubeMusicMetadataClient>>()));
 builder.Services.AddSingleton<SourceFingerprintService>();
 builder.Services.AddHostedService<DownloaderWorker>();
 

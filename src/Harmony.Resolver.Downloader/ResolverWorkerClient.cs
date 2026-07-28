@@ -101,7 +101,8 @@ public sealed class ResolverWorkerClient(HttpClient http, Auth0TokenProvider tok
                 metadata.Artists,
                 metadata.Album,
                 metadata.DurationSeconds,
-                metadata.ThumbnailUrl
+                metadata.ThumbnailUrl,
+                metadata.Song
             }, options: Json)
         };
         request.Headers.TryAddWithoutValidation(LeaseHeader, leaseToken.ToString());
