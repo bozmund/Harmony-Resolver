@@ -109,6 +109,44 @@ public sealed class DelegatedIngestionTests : IAsyncLifetime
         Assert.Contains(videoId, _notifier.Notified);
     }
 
+    [Fact]
+    public async Task Metadata_backfill_failure_code_controls_retry_delay()
+    {
+        const string unavailableId = "metalong001";
+        const string genericId = "metashort01";
+        using var client = _factory.CreateClient();
+        await WaitForReadyAsync(client);
+        var before = DateTimeOffset.UtcNow;
+
+        foreach (var (videoId, code) in new[]
+                 {
+                     (unavailableId, "metadata_yt_dlp_unavailable"),
+                     (genericId, "metadata_yt_dlp_failed")
+                 })
+        {
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync($"/v1/tracks/{videoId}/metadata")).StatusCode);
+            var claim = await client.PostAsync("/v1/worker/jobs/claim", null);
+            using var claimDoc = JsonDocument.Parse(await claim.Content.ReadAsStringAsync());
+            Assert.Equal("metadata", claimDoc.RootElement.GetProperty("kind").GetString());
+            var leaseToken = claimDoc.RootElement.GetProperty("leaseToken").GetString()!;
+            using var fail = new HttpRequestMessage(HttpMethod.Post, $"/v1/worker/metadata-jobs/{videoId}/fail")
+            {
+                Content = JsonContent.Create(new { code })
+            };
+            fail.Headers.Add("X-Lease-Token", leaseToken);
+            Assert.Equal(HttpStatusCode.NoContent, (await client.SendAsync(fail)).StatusCode);
+        }
+        var after = DateTimeOffset.UtcNow;
+
+        await using var db = new ResolverDbContext(new DbContextOptionsBuilder<ResolverDbContext>()
+            .UseNpgsql(_postgres.GetConnectionString()).Options);
+        var unavailable = await db.MetadataBackfillJobs.SingleAsync(x => x.VideoId == unavailableId);
+        var generic = await db.MetadataBackfillJobs.SingleAsync(x => x.VideoId == genericId);
+        var tolerance = TimeSpan.FromSeconds(10);
+        Assert.InRange(unavailable.RetryAfter!.Value, before.AddDays(7) - tolerance, after.AddDays(7) + tolerance);
+        Assert.InRange(generic.RetryAfter!.Value, before.AddMinutes(15) - tolerance, after.AddMinutes(15) + tolerance);
+    }
+
     private WebApplicationFactory<Program> CreateFactory()
     {
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>

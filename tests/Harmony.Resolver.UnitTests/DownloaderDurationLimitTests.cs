@@ -57,4 +57,19 @@ public sealed class DownloaderDurationLimitTests
         Assert.DoesNotContain("signature=secret", exception.Detail);
         Assert.Contains("[redacted-url]", exception.Detail);
     }
+
+    [Theory]
+    [InlineData("ERROR: [youtube] abcdefghijk: Video unavailable.")]
+    [InlineData("error: VIDEO UNAVAILABLE. This video is not available.")]
+    public void MetadataFailureMarksExplicitUnavailableVideosForLongRetry(string stderr)
+    {
+        Assert.Equal("metadata_yt_dlp_unavailable", DownloadFailure.MetadataFailureCode(stderr));
+    }
+
+    [Fact]
+    public void MetadataFailureKeepsOtherYtDlpFailuresGeneric()
+    {
+        Assert.Equal("metadata_yt_dlp_failed",
+            DownloadFailure.MetadataFailureCode("ERROR: Sign in to confirm you're not a bot"));
+    }
 }

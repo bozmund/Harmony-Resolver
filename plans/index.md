@@ -18,3 +18,4 @@
 | 2026-07-25 | [Cloud playback sessions: id-only resolution, real queues, live progress](2026-07-25_0014_cloud_playback_id_only_sessions_websocket.md) | In progress |
 | 2026-07-26 | [Metadata-only backfill for cached Resolver tracks](2026-07-26_0118_metadata_only_backfill.md) | In progress |
 | 2026-07-26 | [Store Resolver metadata on track rows](2026-07-26_1200_store_metadata_on_tracks.md) | In progress |
+| 2026-07-30 | [Reduce retries for unavailable metadata backfills](2026-07-30_2019_reduce_unavailable_metadata_backfill_retries.md) | In progress |

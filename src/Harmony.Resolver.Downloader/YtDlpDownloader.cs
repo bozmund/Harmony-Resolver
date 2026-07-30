@@ -59,6 +59,11 @@ internal static partial class DownloadFailure
         if (toolName is "yt-dlp" or "yt_dlp") return "source_inspection_yt_dlp_failed";
         return "source_fingerprint_process_failed";
     }
+
+    internal static string MetadataFailureCode(string stderr) =>
+        stderr.Contains("video unavailable", StringComparison.OrdinalIgnoreCase)
+            ? "metadata_yt_dlp_unavailable"
+            : "metadata_yt_dlp_failed";
 }
 
 /// <summary>
@@ -152,7 +157,8 @@ public sealed partial class YtDlpDownloader(DownloaderOptions options, ILogger<Y
         var error = await errorTask;
         var metadata = YtDlpMetadataLine.Parse(lines);
         if (process.ExitCode != 0 || metadata is null)
-            throw new DownloadException("metadata_yt_dlp_failed", error, stage: "metadata", tool: "yt-dlp", exitCode: process.ExitCode);
+            throw new DownloadException(DownloadFailure.MetadataFailureCode(error), error,
+                stage: "metadata", tool: "yt-dlp", exitCode: process.ExitCode);
         return metadata;
     }
 

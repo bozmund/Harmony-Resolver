@@ -262,9 +262,17 @@ public sealed class DownloaderWorker(
         }
         catch (DownloadException exception) when (!jobCts.IsCancellationRequested)
         {
-            logger.LogWarning(
-                "Downloader job failed for {VideoId}: code={FailureCode}, kind={JobKind}, stage={Stage}, tool={Tool}, exitCode={ExitCode}, detail={FailureDetail}.",
-                job.VideoId, exception.Code, job.Kind, exception.Stage, exception.Tool, exception.ExitCode, exception.Detail);
+            if (job.Kind == "metadata" && exception.Code == "metadata_yt_dlp_unavailable")
+            {
+                logger.LogInformation(
+                    "Metadata backfill source is unavailable for {VideoId}; retrying in 7 days.", job.VideoId);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Downloader job failed for {VideoId}: code={FailureCode}, kind={JobKind}, stage={Stage}, tool={Tool}, exitCode={ExitCode}, detail={FailureDetail}.",
+                    job.VideoId, exception.Code, job.Kind, exception.Stage, exception.Tool, exception.ExitCode, exception.Detail);
+            }
             try
             {
                 if (job.Kind == "metadata") await client.FailMetadataAsync(job.VideoId, job.LeaseToken, exception.Code, stoppingToken);

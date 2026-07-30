@@ -19,6 +19,7 @@ public static class WorkerIngestionEndpoints
 {
     public const string IngestPolicy = "tracks:ingest";
     private const string LeaseHeader = "X-Lease-Token";
+    private const string MetadataUnavailableFailureCode = "metadata_yt_dlp_unavailable";
 
     public static void MapWorkerIngestionEndpoints(this IEndpointRouteBuilder endpoints, bool requireAuthorization)
     {
@@ -140,8 +141,10 @@ public static class WorkerIngestionEndpoints
     {
         if (!VideoIds.IsValid(videoId)) return InvalidVideoId();
         if (!TryLease(context, videoId, out var lease)) return MissingLease();
-        var failed = await tracks.FailMetadataBackfillAsync(
-            lease, clock.GetUtcNow() + TimeSpan.FromMinutes(15), cancellationToken);
+        var retryDelay = string.Equals(request?.Code, MetadataUnavailableFailureCode, StringComparison.Ordinal)
+            ? TimeSpan.FromDays(7)
+            : TimeSpan.FromMinutes(15);
+        var failed = await tracks.FailMetadataBackfillAsync(lease, clock.GetUtcNow() + retryDelay, cancellationToken);
         return failed ? Results.NoContent() : LeaseLost();
     }
 
