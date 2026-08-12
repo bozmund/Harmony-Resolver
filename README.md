@@ -89,6 +89,15 @@ Run an agent at home from `deploy/downloader/` (`cp .env.example .env`, fill in 
 
 `agent-diagnose` returns a sanitized distributed snapshot from the internal network. The MCP server exposes bounded, read-only diagnostic tools, and the local stdio bridge obtains and refreshes Auth0 Machine-to-Machine tokens from environment variables. Prometheus retains metrics for 15 days, Loki retains logs for 7 days, and Grafana is provisioned at `http://localhost:3000`.
 
+### SSH-only failed-track retry console
+
+Resolver exposes an administrator-only failed-track retry console at `/admin/retries`. Production
+must bind exactly one API replica to a host loopback port and block `/admin/*` at public ingress;
+do not publish this route through Caddy or Nginx. The console requires a browser Auth0 access token
+for the Resolver audience containing `resolver:admin`, plus `AdminConsole__Auth0ClientId` and
+`AdminConsole__Auth0Audience` runtime configuration. It queues fresh urgent downloads through the
+normal PostgreSQL lease and RabbitMQ-doorbell path; it does not directly invoke a downloader.
+
 ## Security
 
 Never commit `.env` or runtime credentials. Production MCP access requires an Auth0 token with `diagnostics:read`. Resolver requests may remain anonymous at lower quotas.

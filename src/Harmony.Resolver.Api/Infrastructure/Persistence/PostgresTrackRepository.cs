@@ -391,6 +391,69 @@ public sealed class PostgresTrackRepository(
         return entities.Select(ToStoredTrack).ToArray();
     }
 
+    public async Task<AdminFailedTrackPage> ListFailedForAdminAsync(
+        int offset, int limit, CancellationToken cancellationToken)
+    {
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        var rows = await db.Tracks.AsNoTracking()
+            .Where(x => x.Status == "failed")
+            .OrderByDescending(x => x.UpdatedAt)
+            .ThenBy(x => x.VideoId)
+            .Skip(Math.Max(0, offset))
+            .Take(limit + 1)
+            .Select(x => new { x.VideoId, x.MetadataJson, x.FailureCode, x.UpdatedAt, x.RetryAfter })
+            .ToListAsync(cancellationToken);
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        var tracks = rows.Select(row =>
+        {
+            var metadata = string.IsNullOrWhiteSpace(row.MetadataJson)
+                ? null
+                : FromJson(row.VideoId, row.MetadataJson);
+            return new AdminFailedTrack(
+                row.VideoId,
+                metadata?.Title,
+                metadata?.Artists ?? [],
+                row.FailureCode,
+                row.UpdatedAt,
+                row.RetryAfter);
+        }).ToArray();
+        return new AdminFailedTrackPage(tracks, offset, hasMore ? offset + tracks.Length : null);
+    }
+
+    public async Task<AdminRetryResult> ForceRetryAsync(
+        string videoId, CancellationToken cancellationToken)
+    {
+        var now = clock.GetUtcNow();
+        await using var db = await contexts.CreateDbContextAsync(cancellationToken);
+        var queued = await db.Tracks
+            .Where(x => x.VideoId == videoId
+                && x.Status == "failed"
+                && !db.IngestionLeases.Any(lease => lease.VideoId == x.VideoId && lease.ExpiresAt > now))
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(x => x.Status, "ingesting")
+                .SetProperty(x => x.Priority, (int)IngestionPriority.Urgent)
+                .SetProperty(x => x.IngestionKind, "download")
+                .SetProperty(x => x.FailureCode, (string?)null)
+                .SetProperty(x => x.RetryAfter, (DateTimeOffset?)null)
+                .SetProperty(x => x.UpdatedAt, now), cancellationToken);
+        if (queued == 1) return new AdminRetryResult(videoId, AdminRetryOutcome.Queued);
+
+        var state = await db.Tracks.AsNoTracking()
+            .Where(x => x.VideoId == videoId)
+            .Select(x => new
+            {
+                x.Status,
+                HasActiveLease = db.IngestionLeases.Any(lease =>
+                    lease.VideoId == x.VideoId && lease.ExpiresAt > now),
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (state is null) return new AdminRetryResult(videoId, AdminRetryOutcome.NotFound);
+        return new AdminRetryResult(
+            videoId,
+            state.HasActiveLease ? AdminRetryOutcome.ActiveLease : AdminRetryOutcome.NotFailed);
+    }
+
     public async Task<RepositoryStatistics> GetStatisticsAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);

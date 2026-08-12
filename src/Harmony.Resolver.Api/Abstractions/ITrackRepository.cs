@@ -44,6 +44,13 @@ public interface ITrackRepository
     Task<IReadOnlyList<StoredTrack>> ListExpiredAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken);
     Task<bool> DeleteExpiredAsync(string videoId, DateTimeOffset now, CancellationToken cancellationToken);
     Task<IReadOnlyList<StoredTrack>> ListFailuresAsync(DateTimeOffset since, int limit, CancellationToken cancellationToken);
+    /// <summary>Returns a bounded, safe-to-display page of failed media jobs for the SSH-only admin console.</summary>
+    Task<AdminFailedTrackPage> ListFailedForAdminAsync(int offset, int limit, CancellationToken cancellationToken);
+    /// <summary>
+    /// Bypasses a failed job's retry cooldown and atomically queues a fresh urgent download.
+    /// Existing ready work and actively leased work are never replaced.
+    /// </summary>
+    Task<AdminRetryResult> ForceRetryAsync(string videoId, CancellationToken cancellationToken);
     Task<RepositoryStatistics> GetStatisticsAsync(DateTimeOffset now, CancellationToken cancellationToken);
     Task<long> GetReadyBytesAsync(CancellationToken cancellationToken);
     /// <summary>

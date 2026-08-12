@@ -176,6 +176,31 @@ public sealed class PostgresTrackRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Force_retry_bypasses_failure_cooldown_without_replacing_active_work()
+    {
+        var repository = new PostgresTrackRepository(_contexts, _clock);
+        const string id = "adminRtry01";
+        var lease = await repository.TryAcquireLeaseAsync(id, Guid.NewGuid(), TimeSpan.FromMinutes(3), CancellationToken.None);
+        await repository.MarkFailedAsync(
+            lease!, "worker_error", _clock.GetUtcNow() + TimeSpan.FromDays(1), CancellationToken.None);
+        await repository.SetMetadataAsync(
+            new TrackMetadata(id, "Retry me", ["Admin Test"]), CancellationToken.None);
+
+        var result = await repository.ForceRetryAsync(id, CancellationToken.None);
+
+        Assert.Equal(AdminRetryOutcome.Queued, result.Outcome);
+        var track = await repository.GetAsync(id, CancellationToken.None);
+        Assert.Equal(TrackStatus.Ingesting, track!.Status);
+        Assert.Null(track.FailureCode);
+        Assert.Null(track.RetryAfter);
+        var page = await repository.ListFailedForAdminAsync(0, 10, CancellationToken.None);
+        Assert.DoesNotContain(page.Tracks, item => item.VideoId == id);
+        Assert.Equal(
+            AdminRetryOutcome.NotFailed,
+            (await repository.ForceRetryAsync(id, CancellationToken.None)).Outcome);
+    }
+
+    [Fact]
     public async Task ClaimJob_returns_null_when_no_jobs_are_pending()
     {
         var repository = new PostgresTrackRepository(_contexts, _clock);

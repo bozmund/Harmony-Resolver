@@ -31,10 +31,12 @@ builder.Services.Configure<ResolverOptions>(builder.Configuration.GetSection("Re
 builder.Services.Configure<ObjectStorageOptions>(builder.Configuration.GetSection("ObjectStorage"));
 builder.Services.Configure<QuotaOptions>(builder.Configuration.GetSection("Quotas"));
 builder.Services.Configure<RabbitMqOptions>(builder.Configuration.GetSection("RabbitMq"));
+builder.Services.Configure<AdminConsoleOptions>(builder.Configuration.GetSection("AdminConsole"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ResolverOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<ObjectStorageOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<QuotaOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RabbitMqOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AdminConsoleOptions>>().Value);
 builder.Services.AddSingleton<RequestIdentityResolver>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ITrackCatalog, MemoryTrackCatalog>();
@@ -148,21 +150,24 @@ if (authEnabled)
         o.MapInboundClaims = false;
         o.TokenValidationParameters = new TokenValidationParameters { ValidateIssuer = true, ValidateAudience = true, ValidateLifetime = true, ValidateIssuerSigningKey = true };
     });
-    // Downloader fleet authorization. Mirrors the MCP service's diagnostics:read policy: a valid
-    // Auth0 token whose permissions/scope claim contains tracks:ingest. Applied only to /v1/worker/*.
-    builder.Services.AddAuthorization(options => options.AddPolicy(WorkerIngestionEndpoints.IngestPolicy, policy =>
-        policy.RequireAuthenticatedUser().RequireAssertion(context =>
-            context.User.FindAll("permissions").Any(claim =>
-                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:ingest", StringComparer.Ordinal)) ||
-            context.User.FindAll("scope").Any(claim =>
-                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:ingest", StringComparer.Ordinal)))));
-    builder.Services.AddAuthorization(options => options.AddPolicy(BackupUploadEndpoints.BackupPolicy, policy =>
-        policy.RequireAuthenticatedUser().RequireAssertion(context =>
-            context.User.FindAll("permissions").Any(claim =>
-                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:backup", StringComparer.Ordinal)) ||
-            context.User.FindAll("scope").Any(claim =>
-                claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("tracks:backup", StringComparer.Ordinal)))));
 }
+builder.Services.AddAuthorization(options =>
+{
+    // The browser console is an additional control, not a substitute for
+    // network isolation. Platform exposes it only on a loopback-bound port.
+    options.AddPolicy(AdminRetryEndpoints.Policy, policy =>
+        policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            HasPermission(context.User, "resolver:admin")));
+    if (!authEnabled) return;
+    // Downloader fleet authorization. A valid Auth0 token whose permissions/scope
+    // contains tracks:ingest is required only on /v1/worker/*.
+    options.AddPolicy(WorkerIngestionEndpoints.IngestPolicy, policy =>
+        policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            HasPermission(context.User, "tracks:ingest")));
+    options.AddPolicy(BackupUploadEndpoints.BackupPolicy, policy =>
+        policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            HasPermission(context.User, "tracks:backup")));
+});
 // Delegated extraction requires an authenticated fleet; refuse to expose an unauthenticated ingest
 // path in a real deployment. Development may run it open for local end-to-end testing.
 if (resolverConfiguration.ExtractionMode == ExtractionMode.Delegated && !authEnabled && !builder.Environment.IsDevelopment())
@@ -221,7 +226,7 @@ app.Use(async (context, next) =>
     }
     await next(context);
 });
-if (authEnabled) app.UseAuthorization();
+app.UseAuthorization();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -320,6 +325,9 @@ app.MapGet("/internal/diagnostics/snapshot", async (ResolverDiagnostics diagnost
     Results.Ok(await diagnostics.SnapshotAsync(cancellationToken)));
 if (!string.IsNullOrWhiteSpace(postgresConnection))
 {
+    app.MapAdminRetryEndpoints(
+        authDomain ?? string.Empty,
+        app.Services.GetRequiredService<AdminConsoleOptions>());
     app.MapGet("/internal/diagnostics/tracks/{videoId}", async (string videoId, ITrackRepository tracks, CancellationToken cancellationToken) =>
         VideoIds.IsValid(videoId) ? Results.Ok(await tracks.GetAsync(videoId, cancellationToken)) : Results.BadRequest());
     app.MapGet("/internal/diagnostics/failures", async (int? limit, ITrackRepository tracks, TimeProvider clock, CancellationToken cancellationToken) =>
@@ -356,5 +364,11 @@ app.Run();
 return;
 
 static object Problem(string code, string detail) => new { type = $"https://harmony-resolver/errors/{code}", title = code, detail, status = 400, code };
+
+static bool HasPermission(System.Security.Claims.ClaimsPrincipal user, string permission) =>
+    user.FindAll("permissions").Any(claim =>
+        claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(permission, StringComparer.Ordinal))
+    || user.FindAll("scope").Any(claim =>
+        claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(permission, StringComparer.Ordinal));
 
 public sealed record DiagnosticAuditRequest(string SubjectHash, string ToolName, Dictionary<string, object?> Summary);
