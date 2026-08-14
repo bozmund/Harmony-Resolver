@@ -2,6 +2,13 @@
   <PropertyGroup>
     <UserSecretsId>edc3a752-553f-4752-af10-804c478ca943</UserSecretsId>
   </PropertyGroup>
+  <!-- The admin console lives in a real .html file for editor tooling, and travels inside the
+       assembly so a publish cannot leave it behind. LogicalName pins the resource key to the file
+       name, so moving the file between folders cannot silently break the lookup. -->
+  <ItemGroup>
+    <Content Remove="Endpoints\AdminConsolePage.html" />
+    <EmbeddedResource Include="Endpoints\AdminConsolePage.html" LogicalName="AdminConsolePage.html" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />

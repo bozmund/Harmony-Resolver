@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Harmony Resolver admin</title>
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
+  <style>
+    body { font: 15px system-ui, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #17212b; }
+    header, .toolbar { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+    h1 { margin-right: auto; } button { padding: .55rem .8rem; cursor: pointer; }
+    #status { min-height: 1.5rem; } table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; border-bottom: 1px solid #d8dee4; padding: .6rem; vertical-align: top; }
+    .muted { color: #607080; } .error { color: #a31313; } .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header><h1>Resolver failed tracks</h1><button id="login">Sign in</button><button id="logout" class="hidden">Sign out</button></header>
+  <p id="status" class="muted">Connect through SSH, then sign in as an administrator.</p>
+  <div id="controls" class="toolbar hidden"><button id="retry">Retry selected</button><button id="refresh">Refresh</button></div>
+  <table id="table" class="hidden"><thead><tr><th></th><th>Track</th><th>Failure</th><th>Updated</th><th>Retry after</th></tr></thead><tbody></tbody></table>
+  <button id="more" class="hidden">Load more</button>
+  <script>
+    (() => {
+      let client, config, token, offset = 0, nextOffset = null;
+      const status = document.querySelector('#status'), table = document.querySelector('#table');
+      const controls = document.querySelector('#controls'), body = document.querySelector('tbody');
+      const show = (message, error = false) => { status.textContent = message; status.className = error ? 'error' : 'muted'; };
+      const api = async (path, options = {}) => {
+        const response = await fetch(path, { ...options, headers: { ...options.headers, Authorization: 'Bearer ' + token } });
+        if (!response.ok) throw new Error(response.status === 403 ? 'Your Auth0 account does not have resolver:admin.' : 'Request failed (' + response.status + ').');
+        return response.json();
+      };
+      const append = tracks => tracks.forEach(track => {
+        const row = document.createElement('tr');
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = track.videoId;
+        const title = document.createElement('td'); title.textContent = track.title || track.videoId;
+        const select = document.createElement('td'); select.append(checkbox);
+        const detail = document.createElement('div'); detail.className = 'muted'; detail.textContent = [track.videoId, ...(track.artists || [])].join(' · '); title.append(detail);
+        const failure = document.createElement('td'); failure.textContent = track.failureCode || 'unknown';
+        const updated = document.createElement('td'); updated.textContent = new Date(track.updatedAt).toLocaleString();
+        const retry = document.createElement('td'); retry.textContent = track.retryAfter ? new Date(track.retryAfter).toLocaleString() : 'now';
+        row.append(select, title, failure, updated, retry); body.append(row);
+      });
+      const load = async (reset = false) => {
+        if (reset) { offset = 0; body.replaceChildren(); }
+        const page = await api('/admin/api/failed?offset=' + offset);
+        append(page.tracks); nextOffset = page.nextOffset; offset = nextOffset ?? offset;
+        table.classList.remove('hidden'); controls.classList.remove('hidden');
+        document.querySelector('#more').classList.toggle('hidden', nextOffset === null);
+        show(page.tracks.length ? '' : 'No failed tracks.');
+      };
+      const signIn = async () => {
+        const configuration = await fetch('/admin/config');
+        if (!configuration.ok) throw new Error('Admin console is not configured on this server.');
+        config = await configuration.json();
+        client = await auth0.createAuth0Client({ domain: config.domain, clientId: config.clientId, authorizationParams: { audience: config.audience, redirect_uri: location.origin + '/admin/retries' } });
+        if (location.search.includes('code=') && location.search.includes('state=')) {
+          await client.handleRedirectCallback(); history.replaceState({}, document.title, '/admin/retries');
+        }
+        if (!(await client.isAuthenticated())) { await client.loginWithRedirect(); return; }
+        token = await client.getTokenSilently({ authorizationParams: { audience: config.audience } });
+        document.querySelector('#login').classList.add('hidden'); document.querySelector('#logout').classList.remove('hidden');
+        await load(true);
+      };
+      document.querySelector('#login').onclick = () => signIn().catch(error => show(error.message, true));
+      document.querySelector('#logout').onclick = () => client.logout({ logoutParams: { returnTo: location.origin + '/admin/retries' } });
+      document.querySelector('#refresh').onclick = () => load(true).catch(error => show(error.message, true));
+      document.querySelector('#more').onclick = () => load().catch(error => show(error.message, true));
+      document.querySelector('#retry').onclick = async () => {
+        const videoIds = [...document.querySelectorAll('tbody input:checked')].map(input => input.value);
+        if (!videoIds.length) return show('Select at least one track.', true);
+        try {
+          const response = await api('/admin/api/retries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ videoIds }) });
+          const queued = response.results.filter(result => result.outcome === 'queued').length;
+          show('Queued ' + queued + ' of ' + videoIds.length + ' selected tracks.'); await load(true);
+        } catch (error) { show(error.message, true); }
+      };
+      signIn().catch(error => show(error.message, true));
+    })();
+  </script>
+</body>
+</html>
