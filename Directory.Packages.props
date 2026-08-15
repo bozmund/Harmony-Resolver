@@ -33,9 +33,17 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="FluentAssertions" Version="8.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
-    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.11.0" />
-    <PackageVersion Include="Testcontainers.RabbitMq" Version="4.11.0" />
-    <PackageVersion Include="Testcontainers.Redis" Version="4.11.0" />
+    <!-- 4.11.0 pulled SSH.NET 2025.1.0, which NuGet audit now flags as a high-severity path
+         traversal in ScpClient.Download (GHSA-q939-rpr3-3284). With TreatWarningsAsErrors that
+         promotes NU1903 to an error and restore fails, so the whole solution stopped building —
+         no code change required to break it, only the advisory being published. 4.14.0 depends on
+         the patched SSH.NET 2026.0.0. Taking the upstream bump rather than pinning the transitive
+         ourselves, which would leave Testcontainers running against a major version of a library
+         it was never built against. All three move together: they share the Testcontainers core,
+         and a split would resolve two versions of it. -->
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <PackageVersion Include="Testcontainers.RabbitMq" Version="4.14.0" />
+    <PackageVersion Include="Testcontainers.Redis" Version="4.14.0" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
   </ItemGroup>
 </Project>
