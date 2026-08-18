@@ -3,8 +3,15 @@ WORKDIR /src
 COPY . .
 RUN dotnet publish src/Harmony.Resolver.Api/Harmony.Resolver.Api.csproj -c Release -o /out
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# yt-dlp's stable channel lags YouTube. In August 2026 YouTube began refusing the
+# media URLs every client in 2026.07.04 (the then-current stable) could produce:
+# extraction succeeded, then the download returned "HTTP Error 403: Forbidden" -
+# on the residential downloader as well as the VPS, so it was not IP reputation.
+# Nightly had already shipped a `visionos` client that is not gated and fetches the
+# complete file. Pinning to stable leaves ingestion broken until upstream cuts a
+# release, so track the pre-release channel and rebuild when this breaks again.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools python3 python3-pip curl ca-certificates unzip \
-    && pip3 install --break-system-packages "yt-dlp[default]" \
+    && pip3 install --break-system-packages --pre --upgrade "yt-dlp[default]" \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
